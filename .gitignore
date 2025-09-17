@@ -1,0 +1,13 @@
+#
+# zed-csharp
+#
+
+*.wasm
+
+#
+# Rust
+#
+
+/target
+
+grammars

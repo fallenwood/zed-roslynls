@@ -1,0 +1,19 @@
+id = "roslynls"
+name = "C#"
+description = "C# support."
+version = "0.1.2"
+schema_version = 1
+authors = [
+    "fminkowski <fminkowski@gmail.com>",
+    "Fabian Freimueller <fabianfreimueller@gmail.com>",
+    "fallenwood <fallenwood.y@outlook.com>",
+]
+repository = "https://github.com/fallenwood/csharp"
+
+[language_servers.roslyn]
+name = "Roslyn"
+language = "CSharp"
+
+[grammars.c_sharp]
+repository = "https://github.com/tree-sitter/tree-sitter-c-sharp"
+commit = "dd5e59721a5f8dae34604060833902b882023aaf"
