@@ -8,7 +8,7 @@ authors = [
     "Fabian Freimueller <fabianfreimueller@gmail.com>",
     "fallenwood <fallenwood.y@outlook.com>",
 ]
-repository = "https://github.com/fallenwood/csharp"
+repository = "https://github.com/fallenwood/zed-roslynls"
 
 [language_servers.roslyn]
 name = "Roslyn"

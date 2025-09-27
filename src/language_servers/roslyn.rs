@@ -1,7 +1,14 @@
 use std::fs;
 use zed_extension_api::{
-    self as zed, serde_json::Map, settings::LspSettings, LanguageServerId, Result,
+    self as zed, LanguageServerId, Result, serde_json::Map, settings::LspSettings,
 };
+
+const ORGANIZATION: &str = "azure-public";
+const PROJECT: &str = "vside";
+const FEED: &str = "vs-impl";
+
+// TODO: Check update instead of hard encoded version
+const PACKAGE_VERSION: &str = "5.1.0-1.25476.5";
 
 pub struct Roslyn {
     cached_binary_path: Option<String>,
@@ -21,6 +28,14 @@ impl Roslyn {
         _language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
+        let default_args: Vec<String> = vec![
+            "--logLevel".into(),
+            "Information".into(),
+            "--extensionLogDirectory".into(),
+            ".roslynls".into(),
+            "--stdio".into(),
+        ];
+
         let binary_settings = LspSettings::for_worktree(Self::LANGUAGE_SERVER_ID, worktree)
             .ok()
             .and_then(|lsp_settings| lsp_settings.binary);
@@ -39,12 +54,101 @@ impl Roslyn {
         {
             return Ok(zed::Command {
                 command: path,
-                args: binary_args.unwrap_or_default(),
+                args: binary_args.unwrap_or(default_args),
                 env: Default::default(),
             });
         }
 
-        todo!("Automatic installation of the roslyn language server is not yet implemented. Please specify the path to the language server binary in the settings.");
+        let (platform, arch) = zed::current_platform();
+        let runtime_identifier = format!(
+            "{os}-{arch}",
+            os = match platform {
+                zed::Os::Mac => "osx",
+                zed::Os::Linux => "linux",
+                zed::Os::Windows => "win",
+            },
+            arch = match arch {
+                zed::Architecture::Aarch64 => "arm64",
+                zed::Architecture::X86 => "x86",
+                zed::Architecture::X8664 => "x64",
+            },
+        );
+
+        let executable = match platform {
+            zed_extension_api::Os::Windows => "Microsoft.CodeAnalysis.LanguageServer.exe",
+            _ => "Microsoft.CodeAnalysis.LanguageServer",
+        };
+
+        if let Some(path) = worktree.which(executable) {
+            return Ok(zed::Command {
+                command: path,
+                args: binary_args.unwrap_or(default_args),
+                env: Default::default(),
+            });
+        }
+
+        if let Some(path) = &self.cached_binary_path
+            && fs::metadata(path).map_or(false, |stat| stat.is_file())
+        {
+            return Ok(zed::Command {
+                command: path.clone(),
+                args: binary_args.unwrap_or(default_args),
+                env: Default::default(),
+            });
+        }
+
+        let package_id = format!("Microsoft.CodeAnalysis.LanguageServer.{runtime_identifier}");
+        let asset_name = format!(
+            "{package_id}.{version}.{extension}",
+            package_id = package_id.clone(),
+            version = PACKAGE_VERSION,
+            extension = "nupkg",
+        );
+
+        let url = format!(
+            "https://pkgs.dev.azure.com/{ORGANIZATION}/{PROJECT}/_packaging/{FEED}/nuget/v3/flat2/{package_id}/{PACKAGE_VERSION}/{asset_name}"
+        );
+
+        let version_dir = format!(
+            "{package_id}-{version}",
+            package_id = package_id,
+            version = PACKAGE_VERSION,
+        );
+
+        let binary_path =
+            format!("{version_dir}/content/LanguageServer/{runtime_identifier}/{executable}");
+
+        if fs::metadata(binary_path.clone()).map_or(false, |stat| stat.is_file()) {
+            self.cached_binary_path = Some(binary_path.clone());
+
+            return Ok(zed::Command {
+                command: binary_path.clone(),
+                args: binary_args.unwrap_or(default_args),
+                env: Default::default(),
+            });
+        }
+
+        println!("Downloading Roslyn Language Server from: {}", url.clone());
+
+        zed::download_file(&url, &version_dir, zed::DownloadedFileType::Zip)
+            .map_err(|e| format!("failed to download file: {e}"))?;
+
+        let entries =
+            fs::read_dir(".").map_err(|e| format!("failed to list working directory {e}"))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("failed to load directory entry {e}"))?;
+            if entry.file_name().to_str() != Some(&version_dir) {
+                fs::remove_dir_all(entry.path()).ok();
+            }
+        }
+
+        self.cached_binary_path = Some(binary_path.clone());
+
+        return Ok(zed::Command {
+            command: binary_path,
+            args: binary_args.unwrap_or(default_args),
+            env: Default::default(),
+        });
     }
 
     pub fn configuration_options(
