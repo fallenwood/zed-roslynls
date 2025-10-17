@@ -1,4 +1,4 @@
-namespace Schema;
+namespace ZedRoslynLS;
 
 using System.Text.Json.Serialization;
 

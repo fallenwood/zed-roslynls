@@ -30,13 +30,8 @@ impl Roslyn {
         _language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        let default_args: Vec<String> = vec![
-            "--logLevel".into(),
-            "Information".into(),
-            "--extensionLogDirectory".into(),
-            ".roslynls".into(),
-            "--stdio".into(),
-        ];
+        // TODO: use configured wrapper path
+        let wrapper_path = String::from("/home/vbox/workspace/zed-roslynls/wrapper/bin/Debug/net9.0/roslynls");
 
         let binary_settings = LspSettings::for_worktree(Self::LANGUAGE_SERVER_ID, worktree)
             .ok()
@@ -54,11 +49,7 @@ impl Roslyn {
                     .cloned()
             })
         {
-            return Ok(zed::Command {
-                command: path,
-                args: binary_args.unwrap_or(default_args),
-                env: Default::default(),
-            });
+            return Self::cmd(wrapper_path, path, worktree.root_path().to_string(), binary_args)
         }
 
         let (platform, arch) = zed::current_platform();
@@ -118,21 +109,13 @@ impl Roslyn {
         };
 
         if let Some(path) = worktree.which(executable) {
-            return Ok(zed::Command {
-                command: path,
-                args: binary_args.unwrap_or(default_args),
-                env: Default::default(),
-            });
+            return Self::cmd(wrapper_path, path, worktree.root_path().to_string(), binary_args)
         }
 
         if let Some(path) = &self.cached_binary_path
             && fs::metadata(path).map_or(false, |stat| stat.is_file())
         {
-            return Ok(zed::Command {
-                command: path.clone(),
-                args: binary_args.unwrap_or(default_args),
-                env: Default::default(),
-            });
+            return Self::cmd(wrapper_path, path.clone(), worktree.root_path().to_string(), binary_args)
         }
 
         let asset_name = format!(
@@ -148,17 +131,15 @@ impl Roslyn {
             version = version,
         );
 
+        let current_dir = std::env::current_dir().unwrap().to_str().unwrap().to_string();
+
         let binary_path =
-            format!("{version_dir}/content/LanguageServer/{runtime_identifier}/{executable}");
+            format!("{current_dir}/{version_dir}/content/LanguageServer/{runtime_identifier}/{executable}");
 
         if fs::metadata(binary_path.clone()).map_or(false, |stat| stat.is_file()) {
             self.cached_binary_path = Some(binary_path.clone());
 
-            return Ok(zed::Command {
-                command: binary_path.clone(),
-                args: binary_args.unwrap_or(default_args),
-                env: Default::default(),
-            });
+            return Self::cmd(wrapper_path, binary_path.clone(), worktree.root_path().to_string(), binary_args)
         }
 
         let url = format!(
@@ -181,11 +162,7 @@ impl Roslyn {
 
         self.cached_binary_path = Some(binary_path.clone());
 
-        return Ok(zed::Command {
-            command: binary_path,
-            args: binary_args.unwrap_or(default_args),
-            env: Default::default(),
-        });
+        Self::cmd(wrapper_path, binary_path, worktree.root_path().to_string(), binary_args)
     }
 
     pub fn configuration_options(
@@ -227,10 +204,17 @@ impl Roslyn {
         zed::serde_json::Value::Object(roslyn_config)
     }
 
-    fn cmd(wrapper_path: String, lsp_path: String, project_root: String) -> Result<zed::Command> {
+    fn cmd(wrapper_path: String, lsp_path: String, project_root: String, binary_args: Option<Vec<String>>) -> Result<zed::Command> {
+        let default_args: Vec<String> = vec![
+            "--lsp".into(),
+            lsp_path,
+            "--project-root".into(),
+            project_root
+        ];
+
         return Ok(zed::Command {
             command: wrapper_path,
-            args: vec!["--lsp".into(), lsp_path, "--project-root".into(), project_root],
+            args: binary_args.unwrap_or(default_args),
             env: Default::default(),
         });
     }
