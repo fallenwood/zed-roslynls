@@ -226,4 +226,12 @@ impl Roslyn {
 
         zed::serde_json::Value::Object(roslyn_config)
     }
+
+    fn cmd(wrapper_path: String, lsp_path: String, project_root: String) -> Result<zed::Command> {
+        return Ok(zed::Command {
+            command: wrapper_path,
+            args: vec!["--lsp".into(), lsp_path, "--project-root".into(), project_root],
+            env: Default::default(),
+        });
+    }
 }
