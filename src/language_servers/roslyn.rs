@@ -3,12 +3,14 @@ use zed_extension_api::{
     self as zed, LanguageServerId, Result, serde_json::Map, settings::LspSettings,
 };
 
+use crate::language_servers::model::NuGetPackagesResponse;
+
 const ORGANIZATION: &str = "azure-public";
 const PROJECT: &str = "vside";
 const FEED: &str = "vs-impl";
 
-// TODO: Check update instead of hard encoded version
-const PACKAGE_VERSION: &str = "5.1.0-1.25476.5";
+// Example version
+// const PACKAGE_VERSION: &str = "5.1.0-1.25476.5";
 
 pub struct Roslyn {
     cached_binary_path: Option<String>,
@@ -60,6 +62,7 @@ impl Roslyn {
         }
 
         let (platform, arch) = zed::current_platform();
+
         let runtime_identifier = format!(
             "{os}-{arch}",
             os = match platform {
@@ -73,6 +76,41 @@ impl Roslyn {
                 zed::Architecture::X8664 => "x64",
             },
         );
+
+        let package_id = format!("Microsoft.CodeAnalysis.LanguageServer.{runtime_identifier}");
+
+        // Fetch latest version
+        let version = {
+            let url = format!(
+                "https://feeds.dev.azure.com/{ORGANIZATION}/{PROJECT}/_apis/packaging/feeds/{FEED}/packages?packageNameQuery={package_id}&api-version=6.0-preview.1",
+            );
+
+            println!(
+                "Fetching latest Roslyn Language Server version from: {}",
+                url.clone()
+            );
+
+            let request = zed::http_client::HttpRequest::builder()
+                .method(zed_extension_api::http_client::HttpMethod::Get)
+                .url(&url)
+                .build()?;
+            let nuget_package_response = zed::http_client::fetch(&request)?;
+
+            let nuget_packages: NuGetPackagesResponse =
+                serde_json::from_slice(&nuget_package_response.body.as_slice())
+                    .map_err(|e| e.to_string())?;
+
+            let package = nuget_packages
+                .value
+                .iter()
+                .flat_map(|p| p.versions.iter())
+                .find(|v| v.is_latest == true)
+                .unwrap();
+
+            let version = package.version.clone();
+
+            version
+        };
 
         let executable = match platform {
             zed_extension_api::Os::Windows => "Microsoft.CodeAnalysis.LanguageServer.exe",
@@ -97,22 +135,17 @@ impl Roslyn {
             });
         }
 
-        let package_id = format!("Microsoft.CodeAnalysis.LanguageServer.{runtime_identifier}");
         let asset_name = format!(
             "{package_id}.{version}.{extension}",
             package_id = package_id.clone(),
-            version = PACKAGE_VERSION,
+            version = version,
             extension = "nupkg",
-        );
-
-        let url = format!(
-            "https://pkgs.dev.azure.com/{ORGANIZATION}/{PROJECT}/_packaging/{FEED}/nuget/v3/flat2/{package_id}/{PACKAGE_VERSION}/{asset_name}"
         );
 
         let version_dir = format!(
             "{package_id}-{version}",
             package_id = package_id,
-            version = PACKAGE_VERSION,
+            version = version,
         );
 
         let binary_path =
@@ -127,6 +160,10 @@ impl Roslyn {
                 env: Default::default(),
             });
         }
+
+        let url = format!(
+            "https://pkgs.dev.azure.com/{ORGANIZATION}/{PROJECT}/_packaging/{FEED}/nuget/v3/flat2/{package_id}/{version}/{asset_name}"
+        );
 
         println!("Downloading Roslyn Language Server from: {}", url.clone());
 
