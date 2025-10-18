@@ -95,6 +95,8 @@ public sealed class MessageProcessor
 
         var initialized = false;
 
+        // TODO: workaround for
+        // { id = 26, jsonrpc = "2.0", method = "textDocument/diagnostic", params = { range = { ["end"] = { character = 0, line = 37 }, start = { character = 0, line = 0 } }, textDocument = { uri = "file:///home/vbox/workspace/cross/Program.cs" } } }
         while (!cancellationToken.IsCancellationRequested)
         {
             var result = await reader.ReadAsync(cancellationToken);
