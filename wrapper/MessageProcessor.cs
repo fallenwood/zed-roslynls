@@ -44,7 +44,17 @@ public sealed class MessageProcessor
             projects = Directory.GetFiles(projectRoot, "*.csproj", SearchOption.AllDirectories);
         }
 
-        return new(projectRoot, solutions.FirstOrDefault() ?? string.Empty, projects, lsp);
+        var solution = solutions.FirstOrDefault() ?? string.Empty;
+        var solutionUri = string.Empty;
+
+        if (!string.IsNullOrEmpty(solution))
+        {
+            solutionUri = new Uri(solution).AbsoluteUri;
+        }
+
+        var projectUris = projects.Select(p => new Uri(p).AbsoluteUri).ToArray();
+
+        return new(projectRoot, solutionUri, projectUris, lsp);
     }
 
     public async Task ProcessAsync(CancellationToken cancellationToken)
@@ -109,12 +119,10 @@ public sealed class MessageProcessor
                     var solutionNotification = new OpenSolutionNotifiation(this.solution);
                     await SendNotificationAsync(writer, solutionNotification, LspJsonSerializerContext.Default.OpenSolutionNotifiation, cancellationToken);
 
-                    foreach (var project in this.projects)
-                    {
-                        var projectNotification = new OpenProjectNotification(project);
+                    var projectNotification = new OpenProjectNotification(this.projects);
 
-                        await SendNotificationAsync(writer, projectNotification, LspJsonSerializerContext.Default.OpenProjectNotification, cancellationToken);
-                    }
+                    await SendNotificationAsync(writer, projectNotification, LspJsonSerializerContext.Default.OpenProjectNotification, cancellationToken);
+
                     await writer.FlushAsync(cancellationToken);
                 }
             }

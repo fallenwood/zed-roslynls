@@ -12,7 +12,7 @@ public sealed class OpenSolutionNotifiation(string solution)
     public SolutionParams Params { get; } = new(solution);
 }
 
-public sealed class OpenProjectNotification(string project)
+public sealed class OpenProjectNotification(string[] projects)
 {
     [JsonPropertyName("jsonrpc")]
     public string JsonRpc { get; } = "2.0";
@@ -21,7 +21,7 @@ public sealed class OpenProjectNotification(string project)
     public string Method { get; } = "project/open";
 
     [JsonPropertyName("params")]
-    public ProjectParams Params { get; } = new(project);
+    public ProjectParams Params { get; } = new(projects);
 }
 
 public sealed class SolutionParams(string solution)
@@ -30,10 +30,10 @@ public sealed class SolutionParams(string solution)
     public string Solution { get; } = solution;
 }
 
-public sealed class ProjectParams(string project)
+public sealed class ProjectParams(string[] projects)
 {
-    [JsonPropertyName("project")]
-    public string Project { get; } = project;
+    [JsonPropertyName("projects")]
+    public string[] Projects { get; } = projects;
 }
 
 [JsonSerializable(typeof(OpenSolutionNotifiation))]

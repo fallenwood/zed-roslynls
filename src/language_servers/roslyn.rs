@@ -8,12 +8,14 @@ use crate::language_servers::model::NuGetPackagesResponse;
 const ORGANIZATION: &str = "azure-public";
 const PROJECT: &str = "vside";
 const FEED: &str = "vs-impl";
+const WRAPPER_PATH_KEY: &str = "wrapper_path";
 
 // Example version
 // const PACKAGE_VERSION: &str = "5.1.0-1.25476.5";
 
 pub struct Roslyn {
     cached_binary_path: Option<String>,
+    cached_wrapper_path: Option<String>,
 }
 
 impl Roslyn {
@@ -22,6 +24,7 @@ impl Roslyn {
     pub fn new() -> Self {
         Roslyn {
             cached_binary_path: None,
+            cached_wrapper_path: None,
         }
     }
 
@@ -30,28 +33,6 @@ impl Roslyn {
         _language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        // TODO: use configured wrapper path
-        let wrapper_path = String::from("/home/vbox/workspace/zed-roslynls/wrapper/bin/Debug/net9.0/roslynls");
-
-        let binary_settings = LspSettings::for_worktree(Self::LANGUAGE_SERVER_ID, worktree)
-            .ok()
-            .and_then(|lsp_settings| lsp_settings.binary);
-        let binary_args = binary_settings
-            .as_ref()
-            .and_then(|binary_settings| binary_settings.arguments.clone());
-
-        if let Some(path) = binary_settings
-            .and_then(|binary_settings| binary_settings.path)
-            .or_else(|| {
-                self.cached_binary_path
-                    .as_ref()
-                    .filter(|path| fs::metadata(path).map_or(false, |stat| stat.is_file()))
-                    .cloned()
-            })
-        {
-            return Self::cmd(wrapper_path, path, worktree.root_path().to_string(), binary_args)
-        }
-
         let (platform, arch) = zed::current_platform();
 
         let runtime_identifier = format!(
@@ -69,6 +50,59 @@ impl Roslyn {
         );
 
         let package_id = format!("Microsoft.CodeAnalysis.LanguageServer.{runtime_identifier}");
+
+        // TODO: use configured wrapper path
+        let settings = LspSettings::for_worktree(Self::LANGUAGE_SERVER_ID, worktree)
+            .ok();
+
+        let wrapper_path = settings
+            .as_ref()
+            .and_then(|lsp_settings| {
+                lsp_settings.settings.as_ref()
+            })
+            .and_then(|lsp_settings| {
+                if let zed::serde_json::Value::Object(settings_map) = lsp_settings {
+                    settings_map.get(WRAPPER_PATH_KEY).and_then(|value| {
+                        if let zed::serde_json::Value::String(path) = value {
+                            Some(path.clone())
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                }
+            });
+
+        let wrapper_path = if let Some(path) = wrapper_path {
+            path
+        } else if let Some(cached_path) = &self.cached_wrapper_path {
+            cached_path.clone()
+        } else {
+            println!("No roslynls wrapper found");
+            // TODO: download roslynls wrapper
+            "roslynls".into()
+        };
+
+        self.cached_wrapper_path = Some(wrapper_path.clone());
+
+        let binary_settings = settings
+            .and_then(|lsp_settings| lsp_settings.binary);
+        let binary_args = binary_settings
+            .as_ref()
+            .and_then(|binary_settings| binary_settings.arguments.clone());
+
+        if let Some(path) = binary_settings
+            .and_then(|binary_settings| binary_settings.path)
+            .or_else(|| {
+                self.cached_binary_path
+                    .as_ref()
+                    .filter(|path| fs::metadata(path).map_or(false, |stat| stat.is_file()))
+                    .cloned()
+            })
+        {
+            return Self::cmd(wrapper_path, path, worktree.root_path().to_string(), binary_args)
+        }
 
         // Fetch latest version
         let version = {
@@ -160,6 +194,26 @@ impl Roslyn {
             }
         }
 
+        if platform != zed::Os::Windows {
+            // Workaround: Fix permission error on linux
+            let entries = walkdir::WalkDir::new(".")
+                .into_iter()
+                .filter_map(|entry| {
+                    entry.ok().and_then(|e| {
+                        if e.file_type().is_file() {
+                            Some(e.path().display().to_string())
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect::<Vec<String>>();
+
+            for entry in entries {
+                Self::add_read_permissions(&entry).unwrap();
+            }
+        }
+
         self.cached_binary_path = Some(binary_path.clone());
 
         Self::cmd(wrapper_path, binary_path, worktree.root_path().to_string(), binary_args)
@@ -184,6 +238,10 @@ impl Roslyn {
 
         if let zed::serde_json::Value::Object(settings_map) = settings {
             for (key, value) in &settings_map {
+                if key == WRAPPER_PATH_KEY {
+                    continue;
+                }
+
                 if key.contains('|') {
                     // This is already in the language|category format
                     if let zed::serde_json::Value::Object(nested_settings) = value {
@@ -217,5 +275,25 @@ impl Roslyn {
             args: binary_args.unwrap_or(default_args),
             env: Default::default(),
         });
+    }
+
+    #[cfg(unix)]
+    fn add_read_permissions(path: &str) -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = fs::metadata(path).unwrap();
+        let mut permissions = metadata.permissions();
+        let mode = permissions.mode();
+
+        let new_mode = mode | 0o400;
+        permissions.set_mode(new_mode);
+
+        fs::set_permissions(path, permissions).unwrap();
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    fn add_read_permissions(_path: &str) -> Result<()> {
+        // No-op on Windows
+        Ok(())
     }
 }
