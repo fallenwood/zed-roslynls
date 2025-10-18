@@ -194,26 +194,6 @@ impl Roslyn {
             }
         }
 
-        if platform != zed::Os::Windows {
-            // Workaround: Fix permission error on linux
-            let entries = walkdir::WalkDir::new(".")
-                .into_iter()
-                .filter_map(|entry| {
-                    entry.ok().and_then(|e| {
-                        if e.file_type().is_file() {
-                            Some(e.path().display().to_string())
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .collect::<Vec<String>>();
-
-            for entry in entries {
-                Self::add_read_permissions(&entry).unwrap();
-            }
-        }
-
         self.cached_binary_path = Some(binary_path.clone());
 
         Self::cmd(wrapper_path, binary_path, worktree.root_path().to_string(), binary_args)
@@ -275,25 +255,5 @@ impl Roslyn {
             args: binary_args.unwrap_or(default_args),
             env: Default::default(),
         });
-    }
-
-    #[cfg(unix)]
-    fn add_read_permissions(path: &str) -> Result<()> {
-        use std::os::unix::fs::PermissionsExt;
-        let metadata = fs::metadata(path).unwrap();
-        let mut permissions = metadata.permissions();
-        let mode = permissions.mode();
-
-        let new_mode = mode | 0o400;
-        permissions.set_mode(new_mode);
-
-        fs::set_permissions(path, permissions).unwrap();
-        Ok(())
-    }
-
-    #[cfg(windows)]
-    fn add_read_permissions(_path: &str) -> Result<()> {
-        // No-op on Windows
-        Ok(())
     }
 }
