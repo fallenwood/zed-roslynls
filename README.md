@@ -11,7 +11,19 @@ fork of https://github.com/zed-extensions/csharp/ and https://github.com/Digni/c
 
 To develop this extension, see the [Developing Extensions](https://zed.dev/docs/extensions/developing-extensions) section of the Zed docs.
 
+## Example settings
+
+```json
+  "lsp": {
+    "roslyn": {
+      "settings": {
+        "wrapper_path": "/home/vbox/workspace/zed-roslynls/wrapper/output/roslynls"
+      }
+    }
+  }
+```
+
 ## TODOs
-- [ ] Add OnReady hook to send `project/open` and `solution/open` to lsp
+- [x] Add OnReady hook to send `project/open` and `solution/open` to lsp
 - [ ] Diagnostic
 - [ ] Automatic package restore
