@@ -25,5 +25,5 @@ To develop this extension, see the [Developing Extensions](https://zed.dev/docs/
 
 ## TODOs
 - [x] Add OnReady hook to send `project/open` and `solution/open` to lsp
-- [ ] Diagnostic
+- [x] Diagnostic
 - [ ] Automatic package restore

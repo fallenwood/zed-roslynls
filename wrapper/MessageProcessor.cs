@@ -1,6 +1,7 @@
 namespace ZedRoslynLS;
 
 using System;
+using System.Buffers;
 using System.IO;
 using System.IO.Pipelines;
 using System.Linq;
@@ -77,14 +78,16 @@ public sealed class MessageProcessor
 
         var consoleInput = Console.OpenStandardInput();
         var consoleOutput = Console.OpenStandardOutput();
+        var consoleError = Console.OpenStandardError();
         var serverInput = process.StandardInput.BaseStream;
         var serverOutput = process.StandardOutput.BaseStream;
+        var serverError = process.StandardError.BaseStream;
 
         var outputTask = serverOutput.CopyToAsync(consoleOutput, cancellationToken);
-
+        var errorTask = serverError.CopyToAsync(consoleError, cancellationToken);
         var inputTask = this.ProcessInputAsync(consoleInput, serverInput, cancellationToken);
 
-        await Task.WhenAll(outputTask, inputTask);
+        await Task.WhenAll(outputTask, inputTask, errorTask);
         await process.WaitForExitAsync(cancellationToken);
     }
 
@@ -100,19 +103,19 @@ public sealed class MessageProcessor
             var result = await reader.ReadAsync(cancellationToken);
             var buffer = result.Buffer;
 
-            foreach (var segment in buffer)
+            while (TryParseMessage(ref buffer, out var messageText))
             {
-                await writer.WriteAsync(segment, cancellationToken);
-
-                // Initialized, skip sending solution/project open notifications.
-                if (initialized)
+                // Workaround for text
+                if (messageText.Contains("textDocument/diagnostic", StringComparison.Ordinal))
                 {
-                    continue;
+                    messageText = EnrichTextDocumentDiagnosticRequest(messageText);
                 }
 
-                var text = Encoding.UTF8.GetString(segment.Span);
+                var messageBytes = Encoding.UTF8.GetBytes($"Content-Length: {messageText.Length}\r\n\r\n{messageText}");
 
-                if (text.Contains("initialize", StringComparison.Ordinal))
+                await writer.WriteAsync(messageBytes, cancellationToken);
+
+                if (!initialized && messageText.Contains("initialize", StringComparison.Ordinal))
                 {
                     initialized = true;
 
@@ -120,20 +123,144 @@ public sealed class MessageProcessor
                     await SendNotificationAsync(writer, solutionNotification, LspJsonSerializerContext.Default.OpenSolutionNotifiation, cancellationToken);
 
                     var projectNotification = new OpenProjectNotification(this.projects);
-
                     await SendNotificationAsync(writer, projectNotification, LspJsonSerializerContext.Default.OpenProjectNotification, cancellationToken);
 
                     await writer.FlushAsync(cancellationToken);
                 }
             }
 
-            reader.AdvanceTo(buffer.End);
+            reader.AdvanceTo(buffer.Start, buffer.End);
 
             if (result.IsCompleted)
             {
                 break;
             }
         }
+    }
+
+    // Copilot generated
+    private static bool TryParseMessage(ref ReadOnlySequence<byte> buffer, out string messageText)
+    {
+        messageText = string.Empty;
+
+        if (buffer.Length == 0)
+        {
+            return false;
+        }
+
+        // Search for "Content-Length:" pattern in the buffer
+        ReadOnlySpan<byte> contentLengthPattern = "Content-Length:"u8;
+        SequencePosition? contentLengthPosition = FindPattern(buffer, contentLengthPattern);
+
+        if (contentLengthPosition == null)
+        {
+            return false;
+        }
+
+        // Check if there's text before Content-Length
+        var beforeContentLength = buffer.Slice(0, contentLengthPosition.Value);
+
+        if (beforeContentLength.Length > 0)
+        {
+            // Return the JSON text that appears before Content-Length
+            messageText = Encoding.UTF8.GetString(beforeContentLength);
+            buffer = buffer.Slice(contentLengthPosition.Value);
+            return true;
+        }
+
+        // Now parse the Content-Length header starting from the buffer
+        var reader = new SequenceReader<byte>(buffer);
+
+        if (!reader.TryReadTo(out ReadOnlySequence<byte> headerLine, (byte)'\r'))
+        {
+            return false;
+        }
+
+        // Skip the \n after \r
+        if (!reader.TryRead(out byte newline) || newline != '\n')
+        {
+            return false;
+        }
+
+        var headerText = Encoding.UTF8.GetString(headerLine);
+
+        // Verify this is Content-Length header
+        if (!headerText.StartsWith("Content-Length: ", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // Parse the Content-Length value
+        if (!int.TryParse(headerText.Substring(16), out var contentLength))
+        {
+            return false;
+        }
+
+        // Expect \r\n separator
+        if (!reader.TryRead(out byte cr) || cr != '\r')
+        {
+            return false;
+        }
+
+        if (!reader.TryRead(out byte lf) || lf != '\n')
+        {
+            return false;
+        }
+
+        // Check if we have enough data for the content
+        if (reader.Remaining < contentLength)
+        {
+            return false;
+        }
+
+        // Read the content
+        var contentSequence = buffer.Slice(reader.Position, contentLength);
+        messageText = Encoding.UTF8.GetString(contentSequence);
+
+        // Advance the buffer past the entire message
+        var endPosition = buffer.GetPosition(contentLength, reader.Position);
+        buffer = buffer.Slice(endPosition);
+
+        return true;
+    }
+
+    // Copilot generated
+    private static SequencePosition? FindPattern(ReadOnlySequence<byte> buffer, ReadOnlySpan<byte> pattern)
+    {
+        if (pattern.Length == 0 || buffer.Length < pattern.Length)
+        {
+            return null;
+        }
+
+        var reader = new SequenceReader<byte>(buffer);
+
+        while (!reader.End)
+        {
+            var position = reader.Position;
+
+            // Try to match the pattern at current position
+            bool matches = true;
+            var tempReader = reader;
+
+            for (int i = 0; i < pattern.Length; i++)
+            {
+                if (!tempReader.TryRead(out byte b) || b != pattern[i])
+                {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if (matches)
+            {
+                return position;
+            }
+
+            // Move to next byte
+            reader.Advance(1);
+        }
+
+        return null;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -144,5 +271,28 @@ public sealed class MessageProcessor
         var message = $"Content-Length: {json.Length}\r\n\r\n{json}";
         var bytes = Encoding.UTF8.GetBytes(message);
         await writer.WriteAsync(bytes, cancellationToken);
+    }
+
+    private static string EnrichTextDocumentDiagnosticRequest(string messageText)
+    {
+        var request = JsonSerializer.Deserialize<TextDocumentDiagnosticRequest>(messageText, LspJsonSerializerContext.Default.TextDocumentDiagnosticRequest);
+
+        if (request?.Params?.TextDocument?.Uri == null)
+        {
+            return messageText;
+        }
+
+        var buffer = File.ReadAllLines(new Uri(request.Params.TextDocument.Uri).LocalPath);
+
+        var lines = buffer.Length;
+        var characters = lines == 0 ? 0 : buffer[^1].Length;
+
+        request.Params.Range = new();
+        request.Params.Range.Start = new() { Line = 0, Character = 0 };
+        request.Params.Range.End = new() { Line = lines, Character = characters };
+
+        messageText = JsonSerializer.Serialize(request, LspJsonSerializerContext.Default.TextDocumentDiagnosticRequest);
+
+        return messageText;
     }
 }
