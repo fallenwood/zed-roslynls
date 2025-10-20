@@ -6,7 +6,7 @@ using System.Threading;
 using ZedRoslynLS;
 
 await ConsoleApp.RunAsync(args,
-    static async (string lsp, string projectRoot, CancellationToken cancellationToken) =>
+    static async (string lsp, string projectRoot, string? logFilePath = null, CancellationToken cancellationToken = default) =>
     {
         if (Environment.OSVersion.Platform == PlatformID.Unix && !string.IsNullOrEmpty(lsp))
         {
@@ -28,7 +28,11 @@ await ConsoleApp.RunAsync(args,
             process.WaitForExit();
         }
 
-        var processor = MessageProcessor.Create(projectRoot, lsp);
+        ILspLogger logger = string.IsNullOrEmpty(logFilePath)
+            ? new LspNoopLogger()
+            : new LspFileLogger(logFilePath);
+
+        var processor = MessageProcessor.Create(projectRoot, lsp, logger);
 
         await processor.ProcessAsync(cancellationToken);
     });
