@@ -2,12 +2,16 @@ using ConsoleAppFramework;
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using ZedRoslynLS;
 
 await ConsoleApp.RunAsync(args,
     static async (string lsp, string projectRoot, CancellationToken cancellationToken) =>
     {
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
         string? logFilePath = null;
         if (Environment.OSVersion.Platform == PlatformID.Unix && !string.IsNullOrEmpty(lsp))
         {
@@ -35,5 +39,15 @@ await ConsoleApp.RunAsync(args,
 
         var processor = MessageProcessor.Create(projectRoot, lsp, logger);
 
-        await processor.ProcessAsync(cancellationToken);
+        _ = Task.Factory.StartNew(async () =>
+        {
+            var monitor = new ProcessMonitor();
+            var exited = await monitor.WaitForParentExit(cts);
+            if (exited)
+            {
+                cts.Cancel();
+            }
+        }, TaskCreationOptions.LongRunning);
+
+        await processor.ProcessAsync(cts.Token);
     });
