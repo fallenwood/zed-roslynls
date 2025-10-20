@@ -6,9 +6,8 @@ using System.Threading;
 using ZedRoslynLS;
 
 await ConsoleApp.RunAsync(args,
-    static async (string lsp, string projectRoot, CancellationToken cancellationToken) =>
+    static async (string lsp, string projectRoot, string? logFilePath = null, CancellationToken cancellationToken = default) =>
     {
-        string? logFilePath = null;
         if (Environment.OSVersion.Platform == PlatformID.Unix && !string.IsNullOrEmpty(lsp))
         {
             var lspRoot = Directory.GetParent(lsp)!.FullName;
