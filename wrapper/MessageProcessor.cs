@@ -12,23 +12,24 @@ using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 
-
 public sealed class MessageProcessor
 {
     private readonly string projectRoot;
     private readonly string solution;
     private readonly string[] projects;
     private readonly string lsp;
+    private readonly ILspLogger lspLogger;
 
-    private MessageProcessor(string projectRoot, string solution, string[] projects, string lsp)
+    private MessageProcessor(string projectRoot, string solution, string[] projects, string lsp, ILspLogger lspLogger)
     {
         this.projectRoot = projectRoot;
         this.solution = solution;
         this.projects = projects;
         this.lsp = lsp;
+        this.lspLogger = lspLogger;
     }
 
-    public static MessageProcessor Create(string projectRoot, string lsp)
+    public static MessageProcessor Create(string projectRoot, string lsp, ILspLogger lspLogger)
     {
         var solutions = Array.Empty<string>();
         var projects = Array.Empty<string>();
@@ -55,7 +56,7 @@ public sealed class MessageProcessor
 
         var projectUris = projects.Select(p => new Uri(p).AbsoluteUri).ToArray();
 
-        return new(projectRoot, solutionUri, projectUris, lsp);
+        return new(projectRoot, solutionUri, projectUris, lsp, lspLogger);
     }
 
     public async Task ProcessAsync(CancellationToken cancellationToken)
@@ -89,6 +90,12 @@ public sealed class MessageProcessor
 
         await Task.WhenAll(outputTask, inputTask, errorTask);
         await process.WaitForExitAsync(cancellationToken);
+    }
+
+    private async Task ProcessOutputAsync(Stream consoleOutput, Stream serverOutput, CancellationToken cancellationToken)
+    {
+        var reader = PipeReader.Create(serverOutput);
+        var writer = PipeWriter.Create(consoleOutput);
     }
 
     private async Task ProcessInputAsync(Stream consoleInput, Stream serverInput, CancellationToken cancellationToken)
@@ -264,13 +271,15 @@ public sealed class MessageProcessor
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static async Task SendNotificationAsync<T>(PipeWriter writer, T notification, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken)
+    private async Task SendNotificationAsync<T>(PipeWriter writer, T notification, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken)
     {
         var json = JsonSerializer.Serialize(notification, typeInfo);
 
         var message = $"Content-Length: {json.Length}\r\n\r\n{json}";
         var bytes = Encoding.UTF8.GetBytes(message);
         await writer.WriteAsync(bytes, cancellationToken);
+        await this.lspLogger.WriteAsync(bytes);
+        await this.lspLogger.FlushAsync();
     }
 
     private static string EnrichTextDocumentDiagnosticRequest(string messageText)
