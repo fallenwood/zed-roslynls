@@ -58,6 +58,7 @@ jobs:
           version: "0.15.2"
 
       - name: Publish wrapper (windows-x64)
+        shell: pwsh
         run: |
           dotnet publish wrapper/roslynls.csproj \
             -c Release \
@@ -66,6 +67,7 @@ jobs:
           mv wrapper/output-win-x64/roslynls.exe wrapper/output-win-x64/roslynls-win-x64.exe
 
       - name: Publish wrapper (linux-x64)
+        shell: pwsh
         run: |
           dotnet publish wrapper/roslynls.csproj \
             -c Release \
