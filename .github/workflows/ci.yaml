@@ -3,6 +3,12 @@ name: Master
 on:
   push:
     branches: [ master ]
+    
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Release the artifact'
+        required: false
 
 jobs:
   build:
@@ -24,9 +30,61 @@ jobs:
         run: cargo build
 
       - name: Setup dotnet 9.0
-        uses: actions/setup-dotnet@v2
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '9.0.x'
 
       - name: Build wrapper
         run: dotnet build wrapper/roslynls.csproj
+
+  release:
+    needs: [build]
+    if: github.event.inputs.release != ''
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup dotnet 9.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: "0.15.2"
+
+      - name: Setup LLVM
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "21.1"
+
+      - name: Publish wrapper (windows-x64)
+        shell: pwsh
+        run: |
+          dotnet publish wrapper/roslynls.csproj \
+            -c Release \
+            -r win-x64 \
+            -o wrapper/output-win-x64
+          mv wrapper/output-win-x64/roslynls.exe wrapper/output-win-x64/roslynls-win-x64.exe
+
+      - name: Publish wrapper (linux-x64)
+        shell: pwsh
+        run: |
+          dotnet publish wrapper/roslynls.csproj \
+            -c Release \
+            -r linux-x64-musl \
+            -o wrapper/output-linux-x64
+          mv wrapper/output-linux-x64/roslynls wrapper/output-linux-x64/roslynls-linux-x64
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            wrapper/output-linux-x64/roslynls
+            wrapper/output-win-x64/roslynls.exe
+#        env:
+#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
