@@ -17,7 +17,7 @@ To develop this extension, see the [Developing Extensions](https://zed.dev/docs/
   "lsp": {
     "roslyn": {
       "settings": {
-        "wrapper_path": "/home/vbox/workspace/zed-roslynls/wrapper/output/roslynls"
+        "roslynls_path": "/home/vbox/workspace/zed-roslynls/wrapper/output/roslynls"
       }
     }
   }

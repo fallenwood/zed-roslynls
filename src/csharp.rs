@@ -1,4 +1,5 @@
 mod language_servers;
+mod utils;
 
 use language_servers::Roslyn;
 use zed_extension_api::{self as zed, Result};
