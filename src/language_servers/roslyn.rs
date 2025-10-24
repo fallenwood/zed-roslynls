@@ -4,11 +4,13 @@ use zed_extension_api::{
 };
 
 use crate::language_servers::model::NuGetPackagesResponse;
+use crate::utils;
 
 const ORGANIZATION: &str = "azure-public";
 const PROJECT: &str = "vside";
 const FEED: &str = "vs-impl";
-const WRAPPER_PATH_KEY: &str = "wrapper_path";
+const ROSLYNLS_PATH_KEY: &str = "roslynls_path";
+const LANGUAGE_SERVER: &str = "Microsoft.CodeAnalysis.LanguageServer";
 
 // Example version
 // const PACKAGE_VERSION: &str = "5.1.0-1.25476.5";
@@ -33,61 +35,14 @@ impl Roslyn {
         _language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        let (platform, arch) = zed::current_platform();
-
-        let runtime_identifier = format!(
-            "{os}-{arch}",
-            os = match platform {
-                zed::Os::Mac => "osx",
-                zed::Os::Linux => "linux",
-                zed::Os::Windows => "win",
-            },
-            arch = match arch {
-                zed::Architecture::Aarch64 => "arm64",
-                zed::Architecture::X86 => "x86",
-                zed::Architecture::X8664 => "x64",
-            },
-        );
-
-        let package_id = format!("Microsoft.CodeAnalysis.LanguageServer.{runtime_identifier}");
-
         // TODO: use configured wrapper path
-        let settings = LspSettings::for_worktree(Self::LANGUAGE_SERVER_ID, worktree)
-            .ok();
+        let settings = LspSettings::for_worktree(Self::LANGUAGE_SERVER_ID, worktree).ok();
 
-        let wrapper_path = settings
-            .as_ref()
-            .and_then(|lsp_settings| {
-                lsp_settings.settings.as_ref()
-            })
-            .and_then(|lsp_settings| {
-                if let zed::serde_json::Value::Object(settings_map) = lsp_settings {
-                    settings_map.get(WRAPPER_PATH_KEY).and_then(|value| {
-                        if let zed::serde_json::Value::String(path) = value {
-                            Some(path.clone())
-                        } else {
-                            None
-                        }
-                    })
-                } else {
-                    None
-                }
-            });
+        let roslynls_path = self.ensure_roslynls(worktree);
 
-        let wrapper_path = if let Some(path) = wrapper_path {
-            path
-        } else if let Some(cached_path) = &self.cached_wrapper_path {
-            cached_path.clone()
-        } else {
-            println!("No roslynls wrapper found");
-            // TODO: download roslynls wrapper
-            "roslynls".into()
-        };
+        self.cached_wrapper_path = Some(roslynls_path.clone());
 
-        self.cached_wrapper_path = Some(wrapper_path.clone());
-
-        let binary_settings = settings
-            .and_then(|lsp_settings| lsp_settings.binary);
+        let binary_settings = settings.and_then(|lsp_settings| lsp_settings.binary);
         let binary_args = binary_settings
             .as_ref()
             .and_then(|binary_settings| binary_settings.arguments.clone());
@@ -101,102 +56,59 @@ impl Roslyn {
                     .cloned()
             })
         {
-            return Self::cmd(wrapper_path, path, worktree.root_path().to_string(), binary_args)
+            return Self::cmd(
+                roslynls_path,
+                path,
+                worktree.root_path().to_string(),
+                binary_args,
+            );
         }
 
-        // Fetch latest version
-        let version = {
-            let url = format!(
-                "https://feeds.dev.azure.com/{ORGANIZATION}/{PROJECT}/_apis/packaging/feeds/{FEED}/packages?packageNameQuery={package_id}&api-version=6.0-preview.1",
+        let executable = utils::get_executable(LANGUAGE_SERVER);
+
+        if let Some(path) = worktree.which(executable.as_str()) {
+            return Self::cmd(
+                roslynls_path,
+                path,
+                worktree.root_path().to_string(),
+                binary_args,
             );
-
-            println!(
-                "Fetching latest Roslyn Language Server version from: {}",
-                url.clone()
-            );
-
-            let request = zed::http_client::HttpRequest::builder()
-                .method(zed_extension_api::http_client::HttpMethod::Get)
-                .url(&url)
-                .build()?;
-            let nuget_package_response = zed::http_client::fetch(&request)?;
-
-            let nuget_packages: NuGetPackagesResponse =
-                serde_json::from_slice(&nuget_package_response.body.as_slice())
-                    .map_err(|e| e.to_string())?;
-
-            let package = nuget_packages
-                .value
-                .iter()
-                .flat_map(|p| p.versions.iter())
-                .find(|v| v.is_latest == true)
-                .unwrap();
-
-            let version = package.version.clone();
-
-            version
-        };
-
-        let executable = match platform {
-            zed_extension_api::Os::Windows => "Microsoft.CodeAnalysis.LanguageServer.exe",
-            _ => "Microsoft.CodeAnalysis.LanguageServer",
-        };
-
-        if let Some(path) = worktree.which(executable) {
-            return Self::cmd(wrapper_path, path, worktree.root_path().to_string(), binary_args)
         }
 
         if let Some(path) = &self.cached_binary_path
             && fs::metadata(path).map_or(false, |stat| stat.is_file())
         {
-            return Self::cmd(wrapper_path, path.clone(), worktree.root_path().to_string(), binary_args)
+            return Self::cmd(
+                roslynls_path,
+                path.clone(),
+                worktree.root_path().to_string(),
+                binary_args,
+            );
         }
 
-        let asset_name = format!(
-            "{package_id}.{version}.{extension}",
-            package_id = package_id.clone(),
-            version = version,
-            extension = "nupkg",
-        );
-
-        let version_dir = format!(
-            "{package_id}-{version}",
-            package_id = package_id,
-            version = version,
-        );
-
-        let current_dir = std::env::current_dir().unwrap().to_str().unwrap().to_string();
-
-        let binary_path =
-            format!("{current_dir}/{version_dir}/content/LanguageServer/{runtime_identifier}/{executable}");
+        let binary_path = Self::get_langauge_server_binary_path(executable.as_str());
 
         if fs::metadata(binary_path.clone()).map_or(false, |stat| stat.is_file()) {
             self.cached_binary_path = Some(binary_path.clone());
 
-            return Self::cmd(wrapper_path, binary_path.clone(), worktree.root_path().to_string(), binary_args)
+            return Self::cmd(
+                roslynls_path,
+                binary_path.clone(),
+                worktree.root_path().to_string(),
+                binary_args,
+            );
         }
 
-        let url = format!(
-            "https://pkgs.dev.azure.com/{ORGANIZATION}/{PROJECT}/_packaging/{FEED}/nuget/v3/flat2/{package_id}/{version}/{asset_name}"
-        );
-
-        println!("Downloading Roslyn Language Server from: {}", url.clone());
-
-        zed::download_file(&url, &version_dir, zed::DownloadedFileType::Zip)
-            .map_err(|e| format!("failed to download file: {e}"))?;
-
-        let entries =
-            fs::read_dir(".").map_err(|e| format!("failed to list working directory {e}"))?;
-        for entry in entries {
-            let entry = entry.map_err(|e| format!("failed to load directory entry {e}"))?;
-            if entry.file_name().to_str() != Some(&version_dir) {
-                fs::remove_dir_all(entry.path()).ok();
-            }
-        }
+        let binary_path = Self::ensure_language_server()?;
 
         self.cached_binary_path = Some(binary_path.clone());
 
-        Self::cmd(wrapper_path, binary_path, worktree.root_path().to_string(), binary_args)
+        Self::cmd(
+            roslynls_path,
+            binary_path,
+            worktree.root_path().to_string(),
+            binary_args,
+        )
     }
 
     pub fn configuration_options(
@@ -218,7 +130,7 @@ impl Roslyn {
 
         if let zed::serde_json::Value::Object(settings_map) = settings {
             for (key, value) in &settings_map {
-                if key == WRAPPER_PATH_KEY {
+                if key == ROSLYNLS_PATH_KEY {
                     continue;
                 }
 
@@ -242,12 +154,17 @@ impl Roslyn {
         zed::serde_json::Value::Object(roslyn_config)
     }
 
-    fn cmd(wrapper_path: String, lsp_path: String, project_root: String, binary_args: Option<Vec<String>>) -> Result<zed::Command> {
+    fn cmd(
+        wrapper_path: String,
+        lsp_path: String,
+        project_root: String,
+        binary_args: Option<Vec<String>>,
+    ) -> Result<zed::Command> {
         let default_args: Vec<String> = vec![
             "--lsp".into(),
             lsp_path,
             "--project-root".into(),
-            project_root
+            project_root,
         ];
 
         return Ok(zed::Command {
@@ -255,5 +172,143 @@ impl Roslyn {
             args: binary_args.unwrap_or(default_args),
             env: Default::default(),
         });
+    }
+
+    fn ensure_roslynls(self: &mut Self, worktree: &zed::Worktree) -> String {
+        let settings = LspSettings::for_worktree(Self::LANGUAGE_SERVER_ID, worktree).ok();
+
+        let wrapper_path = settings
+            .as_ref()
+            .and_then(|lsp_settings| lsp_settings.settings.as_ref())
+            .and_then(|lsp_settings| {
+                if let zed::serde_json::Value::Object(settings_map) = lsp_settings {
+                    settings_map.get(ROSLYNLS_PATH_KEY).and_then(|value| {
+                        if let zed::serde_json::Value::String(path) = value {
+                            Some(path.clone())
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                }
+            });
+
+        if let Some(path) = wrapper_path {
+            path
+        } else if let Some(cached_path) = &self.cached_wrapper_path {
+            cached_path.clone()
+        } else {
+            println!("No roslynls wrapper found");
+            // TODO: download roslynls wrapper
+            "roslynls".into()
+        }
+    }
+
+    fn get_langauge_server_binary_path(executable: &str) -> String {
+        let package_id = Self::get_langauge_server_package_id();
+        let version = Self::get_language_server_latest_version().unwrap();
+        let runtime_identifier = Self::get_runtime_identifier();
+
+        let version_dir = utils::get_version_dir(package_id, version);
+
+        let current_dir = std::env::current_dir()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        format!(
+            "{current_dir}/{version_dir}/content/LanguageServer/{runtime_identifier}/{executable}"
+        )
+    }
+
+    fn ensure_language_server() -> Result<String, String> {
+        let version = Self::get_language_server_latest_version()?;
+
+        let executable = utils::get_executable(LANGUAGE_SERVER);
+
+        let package_id = Self::get_langauge_server_package_id();
+
+        let binary_path = Self::get_langauge_server_binary_path(executable.as_str());
+
+        let asset_name = utils::get_nuget_asset_name(package_id.clone(), version.clone());
+
+        let url = format!(
+            "https://pkgs.dev.azure.com/{ORGANIZATION}/{PROJECT}/_packaging/{FEED}/nuget/v3/flat2/{package_id}/{version}/{asset_name}"
+        );
+
+        println!("Downloading Roslyn Language Server from: {}", url.clone());
+
+        let version_dir = utils::get_version_dir(package_id, version);
+
+        zed::download_file(&url, &version_dir, zed::DownloadedFileType::Zip)
+            .map_err(|e| format!("failed to download file: {e}"))?;
+
+        let entries =
+            fs::read_dir(".").map_err(|e| format!("failed to list working directory {e}"))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("failed to load directory entry {e}"))?;
+            if entry.file_name().to_str() != Some(&version_dir) {
+                fs::remove_dir_all(entry.path()).ok();
+            }
+        }
+
+        Ok(binary_path)
+    }
+
+    fn get_runtime_identifier() -> String {
+        let (platform, arch) = zed::current_platform();
+
+        format!(
+            "{os}-{arch}",
+            os = match platform {
+                zed::Os::Mac => "osx",
+                zed::Os::Linux => "linux",
+                zed::Os::Windows => "win",
+            },
+            arch = match arch {
+                zed::Architecture::Aarch64 => "arm64",
+                zed::Architecture::X86 => "x86",
+                zed::Architecture::X8664 => "x64",
+            },
+        )
+    }
+
+    fn get_langauge_server_package_id() -> String {
+        let runtime_identifier = Self::get_runtime_identifier();
+
+        format!("{LANGUAGE_SERVER}.{runtime_identifier}")
+    }
+
+    fn get_language_server_latest_version() -> Result<String, String> {
+        let package_id = Self::get_langauge_server_package_id();
+        let url = format!(
+            "https://feeds.dev.azure.com/{ORGANIZATION}/{PROJECT}/_apis/packaging/feeds/{FEED}/packages?packageNameQuery={package_id}&api-version=6.0-preview.1",
+        );
+
+        println!(
+            "Fetching latest Roslyn Language Server version from: {}",
+            url.clone()
+        );
+
+        let request = zed::http_client::HttpRequest::builder()
+            .method(zed_extension_api::http_client::HttpMethod::Get)
+            .url(&url)
+            .build()?;
+        let nuget_package_response = zed::http_client::fetch(&request)?;
+
+        let nuget_packages: NuGetPackagesResponse =
+            serde_json::from_slice(&nuget_package_response.body.as_slice())
+                .map_err(|e| e.to_string())?;
+
+        let package = nuget_packages
+            .value
+            .iter()
+            .flat_map(|p| p.versions.iter())
+            .find(|v| v.is_latest == true)
+            .unwrap();
+
+        Ok(package.version.clone())
     }
 }
