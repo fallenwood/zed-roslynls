@@ -76,7 +76,7 @@ jobs:
         run: |
           dotnet publish wrapper/roslynls.csproj `
             -c Release `
-            -r linux-x64-musl `
+            -r linux-musl-x64 `
             -o wrapper/output-linux-x64
           mv wrapper/output-linux-x64/roslynls wrapper/output-linux-x64/roslynls-linux-x64
 
