@@ -83,34 +83,6 @@ impl zed::Extension for CsharpExtension {
 
         Err(format!("unknown debug adapter: {adapter_name}"))
     }
-
-    fn dap_config_to_scenario(
-        &mut self,
-        config: zed_extension_api::DebugConfig,
-    ) -> Result<zed_extension_api::DebugScenario, String> {
-        let netcoredbg = self.netcoredbg.get_or_insert_with(NetcoreDbg::new);
-        return netcoredbg.dap_config_to_scenario(config);
-    }
-
-    fn dap_locator_create_scenario(
-        &mut self,
-        locator_name: String,
-        build_task: zed_extension_api::TaskTemplate,
-        resolved_label: String,
-        debug_adapter_name: String,
-    ) -> Option<zed_extension_api::DebugScenario> {
-        if locator_name == NetcoreDbg::DEBUG_ADAPTER_ID {
-            let netcoredbg = self.netcoredbg.get_or_insert_with(NetcoreDbg::new);
-            return netcoredbg.dap_locator_create_scenario(
-                locator_name,
-                build_task,
-                resolved_label,
-                debug_adapter_name,
-            );
-        }
-
-        None
-    }
 }
 
 zed::register_extension!(CsharpExtension);

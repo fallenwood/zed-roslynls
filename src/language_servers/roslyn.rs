@@ -1,4 +1,4 @@
-use std::fs::{self, FileType};
+use std::fs::{self};
 use zed_extension_api::{
     self as zed, LanguageServerId, Result, serde_json::Map, settings::LspSettings,
 };
@@ -40,7 +40,7 @@ impl Roslyn {
     ) -> Result<zed::Command> {
         let settings = LspSettings::for_worktree(Self::LANGUAGE_SERVER_ID, worktree).ok();
 
-        let roslynls_path = self.ensure_roslynls(worktree);
+        let roslynls_path = self.ensure_roslynls(worktree)?;
 
         self.cached_roslynls_path = Some(roslynls_path.clone());
 
@@ -176,7 +176,7 @@ impl Roslyn {
         });
     }
 
-    fn ensure_roslynls(self: &mut Self, worktree: &zed::Worktree) -> String {
+    fn ensure_roslynls(self: &mut Self, worktree: &zed::Worktree) -> Result<String, String> {
         let settings = LspSettings::for_worktree(Self::LANGUAGE_SERVER_ID, worktree).ok();
 
         let roslynls_path = settings
@@ -201,69 +201,24 @@ impl Roslyn {
             roslynls_path.clone().unwrap_or("None".to_string())
         );
 
-        if let Some(path) = roslynls_path {
+        let path = if let Some(path) = roslynls_path {
             path
         } else if let Some(cached_path) = &self.cached_roslynls_path {
             cached_path.clone()
         } else {
-            let download_path =
-                utils::get_version_dir(ROSLYNLS.to_string(), ROSLYNLS_TAG.to_string());
+            utils::ensure_github_release(ROSLYNLS, ROSLYNLS_REPO, ROSLYNLS_TAG, || {
+                Self::get_roslynls_package_id()
+            },
+            zed_extension_api::DownloadedFileType::Uncompressed)?
+        };
 
-            if std::fs::metadata(&download_path).is_ok() {
-                println!(
-                    "[zed-roslynls] roslynls already downloaded at: {}",
-                    download_path
-                );
-                return download_path;
-            }
-
-            match zed::github_release_by_tag_name(ROSLYNLS_REPO, ROSLYNLS_TAG) {
-                Ok(release) => {
-                    let roslynls = Self::get_roslynls_package_id();
-                    let asset = release.assets.iter().find(|asset| asset.name == roslynls);
-
-                    println!("[zed-roslynls] Found asset: {:?} {:?}", roslynls, asset);
-
-                    if let Some(asset) = asset {
-                        let download_url = &asset.download_url;
-                        println!(
-                            "[zed-roslynls] Downloading roslynls from: {}, to: {}",
-                            download_url, download_path
-                        );
-
-                        zed::download_file(
-                            download_url,
-                            download_path.as_str(),
-                            zed::DownloadedFileType::Uncompressed,
-                        )
-                        .expect("Failed to download roslynls");
-
-                        zed::make_file_executable(download_path.as_str())
-                            .expect("Failed to make roslynls executable");
-
-                        download_path
-                    } else {
-                        println!(
-                            "[zed-roslynls] No suitable roslynls asset found for the current platform"
-                        );
-                        roslynls
-                    }
-                }
-                Err(e) => {
-                    println!(
-                        "[zed-roslynls] Failed to fetch roslynls release info: {}",
-                        e
-                    );
-                    ROSLYNLS.to_string()
-                }
-            }
-        }
+        Ok(path)
     }
 
     fn get_langauge_server_binary_path(executable: &str) -> String {
         let package_id = Self::get_langauge_server_package_id();
         let version = Self::get_language_server_latest_version().unwrap();
-        let runtime_identifier = Self::get_runtime_identifier();
+        let runtime_identifier = utils::get_runtime_identifier();
 
         let version_dir = utils::get_version_dir(package_id, version);
 
@@ -336,32 +291,14 @@ impl Roslyn {
         Ok(binary_path)
     }
 
-    fn get_runtime_identifier() -> String {
-        let (platform, arch) = zed::current_platform();
-
-        format!(
-            "{os}-{arch}",
-            os = match platform {
-                zed::Os::Mac => "osx",
-                zed::Os::Linux => "linux",
-                zed::Os::Windows => "win",
-            },
-            arch = match arch {
-                zed::Architecture::Aarch64 => "arm64",
-                zed::Architecture::X86 => "x86",
-                zed::Architecture::X8664 => "x64",
-            },
-        )
-    }
-
     fn get_langauge_server_package_id() -> String {
-        let runtime_identifier = Self::get_runtime_identifier();
+        let runtime_identifier = utils::get_runtime_identifier();
 
         format!("{LANGUAGE_SERVER}.{runtime_identifier}")
     }
 
     fn get_roslynls_package_id() -> String {
-        let runtime_identifier = Self::get_runtime_identifier();
+        let runtime_identifier = utils::get_runtime_identifier();
 
         format!("{ROSLYNLS}-{runtime_identifier}")
     }

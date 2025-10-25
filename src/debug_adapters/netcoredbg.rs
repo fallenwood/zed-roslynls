@@ -1,14 +1,17 @@
 use serde_json::Value;
-use std::{
-    fs::{self, FileType},
-    path::{Path, PathBuf},
-};
+use std::
+    fs::{self}
+;
 use zed_extension_api::{
-    self as zed, LanguageServerId, Result, serde_json::Map, settings::LspSettings,
+    self as zed, Result,
+    settings::LspSettings,
 };
+
+use crate::utils;
 
 const NETCOREDBG_REPO: &str = "marcptrs/netcoredbg";
 const NETCOREDBG_TAG: &str = "v3.1.2-1054";
+const NETCOREDBG: &str = "netcoredbg";
 
 pub struct NetcoreDbg {
     cached_netcoredbg_path: Option<String>,
@@ -26,17 +29,13 @@ impl NetcoreDbg {
     pub fn get_dap_binary(
         &mut self,
         _adapter_name: String,
-        config: zed_extension_api::DebugTaskDefinition,
+        config: zed::DebugTaskDefinition,
         _user_provided_debug_adapter_path: Option<String>,
-        worktree: &zed_extension_api::Worktree,
-    ) -> Result<zed_extension_api::DebugAdapterBinary, String> {
+        worktree: &zed::Worktree,
+    ) -> Result<zed::DebugAdapterBinary, String> {
         let workspace_folder = worktree.root_path();
 
-        let command = zed::Command {
-            command: "/home/vbox/.local/opt/netcoredbg/netcoredbg".to_string(),
-            args: vec!["--interpreter=vscode".to_string()],
-            env: Default::default(),
-        };
+        let command = self.ensure_netcoredbg(worktree)?;
 
         let mut raw_json: Value = zed::serde_json::from_str(&config.config)
             .map_err(|e| format!("Failed to parse debug configuration: {e}"))?;
@@ -85,7 +84,7 @@ impl NetcoreDbg {
         &mut self,
         _adapter_name: String,
         config: serde_json::Value,
-    ) -> Result<zed_extension_api::StartDebuggingRequestArgumentsRequest, String> {
+    ) -> Result<zed::StartDebuggingRequestArgumentsRequest, String> {
         if config.is_null() {
             return Err("Config is null - awaiting locator resolution".to_string());
         }
@@ -109,162 +108,85 @@ impl NetcoreDbg {
         }
     }
 
-    pub fn dap_config_to_scenario(
-        &mut self,
-        config: zed::DebugConfig,
-    ) -> Result<zed::DebugScenario, String> {
-        let (program, cwd, args, envs) = match config.request {
-            zed::DebugRequest::Launch(ref launch) => {
-                let program = launch.program.clone();
-                let cwd = launch.cwd.clone().unwrap_or_else(|| ".".to_string());
-                let args = launch.args.clone();
-                let envs = launch.envs.clone();
-                (program, cwd, args, envs)
-            }
-            zed::DebugRequest::Attach(_) => {
-                return Err("Attach is not supported via dap_config_to_scenario".to_string());
-            }
-        };
+    fn ensure_netcoredbg(
+        self: &mut Self,
+        worktree: &zed::Worktree,
+    ) -> std::result::Result<zed::Command, String> {
+        let default_args = vec!["--interpreter=vscode".to_string()];
 
-        let mut debug_config = serde_json::Map::new();
-        debug_config.insert("type".to_string(), Value::String("netcoredbg".to_string()));
-        debug_config.insert("request".to_string(), Value::String("launch".to_string()));
-        debug_config.insert("program".to_string(), Value::String(program.clone()));
-        debug_config.insert("cwd".to_string(), Value::String(cwd.clone()));
+        let settings = LspSettings::for_worktree(Self::DEBUG_ADAPTER_ID, worktree).ok();
+        let binary_settings = settings.and_then(|lsp_settings| lsp_settings.binary);
+        let binary_args = binary_settings
+            .as_ref()
+            .and_then(|binary_settings| binary_settings.arguments.clone());
 
-        if !args.is_empty() {
-            debug_config.insert(
-                "args".to_string(),
-                Value::Array(args.iter().map(|a| Value::String(a.clone())).collect()),
-            );
+        if let Some(path) = binary_settings
+            .and_then(|binary_settings| binary_settings.path)
+            .or_else(|| {
+                self.cached_netcoredbg_path
+                    .as_ref()
+                    .filter(|path| fs::metadata(path).map_or(false, |stat| stat.is_file()))
+                    .cloned()
+            })
+        {
+            return Ok(zed::Command {
+                command: path,
+                args: binary_args.unwrap_or(default_args),
+                env: Default::default(),
+            });
         }
 
-        if !envs.is_empty() {
-            let env_obj: serde_json::Map<String, Value> = envs
-                .iter()
-                .map(|(k, v)| (k.clone(), Value::String(v.clone())))
-                .collect();
-            debug_config.insert("env".to_string(), Value::Object(env_obj));
+        let executable = utils::get_executable(NETCOREDBG);
+
+        if let Some(path) = worktree.which(executable.as_str()) {
+            return Ok(zed::Command {
+                command: path,
+                args: binary_args.unwrap_or(default_args),
+                env: Default::default(),
+            });
         }
 
-        let stop_at_entry = config.stop_on_entry.unwrap_or(false);
-        debug_config.insert("stopAtEntry".to_string(), Value::Bool(stop_at_entry));
-        debug_config.insert(
-            "console".to_string(),
-            Value::String("integratedTerminal".to_string()),
-        );
+        if let Some(path) = &self.cached_netcoredbg_path
+            && fs::metadata(path).map_or(false, |stat| stat.is_file())
+        {
+            return Ok(zed::Command {
+                command: path.into(),
+                args: binary_args.unwrap_or(default_args),
+                env: Default::default(),
+            });
+        }
 
-        let config_str = zed::serde_json::to_string(&debug_config)
-            .map_err(|e| format!("Failed to serialize debug configuration: {e}"))?;
+        let netcoredbg_path = utils::ensure_github_release(
+            NETCOREDBG,
+            NETCOREDBG_REPO,
+            NETCOREDBG_TAG,
+            || Self::get_netcoredbg_package_id(),
+            Self::get_github_asset_file_type())?;
 
-        Ok(zed::DebugScenario {
-            label: format!(
-                "Debug {}",
-                program.split('/').next_back().unwrap_or(&program)
-            ),
-            adapter: config.adapter,
-            build: None,
-            config: config_str,
-            tcp_connection: None,
-        })
+        return Ok(zed::Command {
+            command: netcoredbg_path,
+            args: binary_args.unwrap_or(default_args),
+            env: Default::default(),
+        });
     }
 
-    pub fn dap_locator_create_scenario(
-        &mut self,
-        locator_name: String,
-        build_task: zed::TaskTemplate,
-        resolved_label: String,
-        _debug_adapter_name: String,
-    ) -> Option<zed::DebugScenario> {
-        let cmd = &build_task.command;
-        {
-            let cmd_name = Path::new(cmd)
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or(cmd);
-            let is_dotnet = cmd_name == "dotnet" || cmd_name == "dotnet.exe";
-            if !is_dotnet {
-                return None;
-            }
-        }
+    fn get_netcoredbg_package_id() -> String {
+        let runtime_identifier = utils::get_runtime_identifier();
+        let (os, _) = zed::current_platform();
 
-        let collect_program_args = |args: &Vec<String>| -> Vec<String> {
-            if let Some(idx) = args.iter().position(|a| a == "--") {
-                args[idx + 1..].to_vec()
-            } else {
-                Vec::new()
-            }
+        let ext = match os {
+            zed::Os::Windows => "zip",
+            _ => "tar.gz",
         };
 
-        let args = build_task.args.clone();
-        if args.is_empty() {
-            return None;
+        format!("{NETCOREDBG}-{runtime_identifier}.{ext}")
+    }
+
+    fn get_github_asset_file_type() -> zed::DownloadedFileType {
+        let (os, _) = zed::current_platform();
+        match os {
+            zed::Os::Windows => zed_extension_api::DownloadedFileType::Zip,
+            _ => zed::DownloadedFileType::GzipTar,
         }
-
-        let program_args = collect_program_args(&args);
-
-        let derived_build_task = match args.first().map(|s| s.as_str()) {
-            Some("run") => {
-                let mut derived = build_task.clone();
-                let mut new_args = vec!["build".to_string()];
-
-                let cwd = build_task.cwd.as_ref().map(|s| s.as_str()).unwrap_or(".");
-
-                let mut iter = args.iter().skip(1);
-                while let Some(arg) = iter.next() {
-                    if arg == "--" {
-                        break;
-                    } else if arg == "--project" {
-                        if let Some(project_file) = iter.next() {
-                            let project_path =
-                                if project_file.starts_with('/') || project_file.contains(":\\") {
-                                    project_file.clone()
-                                } else {
-                                    let mut full_path = PathBuf::from(cwd);
-                                    full_path.push(project_file);
-                                    full_path.to_string_lossy().to_string()
-                                };
-                            new_args.push(project_path);
-                        }
-                    } else if !arg.starts_with("--") || arg == "--configuration" || arg == "-c" {
-                        new_args.push(arg.clone());
-                        if arg == "--configuration" || arg == "-c" {
-                            if let Some(val) = iter.next() {
-                                new_args.push(val.clone());
-                            }
-                        }
-                    }
-                }
-
-                derived.args = new_args;
-                derived
-            }
-            _ => {
-                return None;
-            }
-        };
-
-        let mut derived_build_task = derived_build_task;
-        let mut env = derived_build_task.env.clone();
-        if !program_args.is_empty() {
-            env.push((
-                "ZED_DOTNET_PROGRAM_ARGS".to_string(),
-                serde_json::to_string(&program_args).unwrap_or_default(),
-            ));
-        }
-        derived_build_task.env = env;
-
-        Some(zed::DebugScenario {
-            label: format!("Debug {}", resolved_label),
-            adapter: "netcoredbg".to_string(),
-            build: Some(zed::BuildTaskDefinition::Template(
-                zed::BuildTaskDefinitionTemplatePayload {
-                    template: derived_build_task.clone(),
-                    locator_name: Some(locator_name.clone()),
-                },
-            )),
-            config: "null".to_string(),
-            tcp_connection: None,
-        })
     }
 }
