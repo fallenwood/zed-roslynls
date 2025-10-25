@@ -1,24 +1,17 @@
 use serde_json::Value;
-use std::{fs::{self, FileType}, path::{Path, PathBuf}};
+use std::{
+    fs::{self, FileType},
+    path::{Path, PathBuf},
+};
 use zed_extension_api::{
     self as zed, LanguageServerId, Result, serde_json::Map, settings::LspSettings,
 };
 
-const ORGANIZATION: &str = "azure-public";
-const PROJECT: &str = "vside";
-const FEED: &str = "vs-impl";
-const ROSLYNLS: &str = "roslynls";
-const ROSLYNLS_PATH_KEY: &str = "roslynls_path";
-const ROSLYNLS_REPO: &str = "fallenwood/zed-roslynls";
-const ROSLYNLS_TAG: &str = "v0.0.2";
-const LANGUAGE_SERVER: &str = "Microsoft.CodeAnalysis.LanguageServer";
-
-// Example version
-// const PACKAGE_VERSION: &str = "5.1.0-1.25476.5";
+const NETCOREDBG_REPO: &str = "marcptrs/netcoredbg";
+const NETCOREDBG_TAG: &str = "v3.1.2-1054";
 
 pub struct NetcoreDbg {
-    cached_language_server_path: Option<String>,
-    cached_roslynls_path: Option<String>,
+    cached_netcoredbg_path: Option<String>,
 }
 
 impl NetcoreDbg {
@@ -26,17 +19,15 @@ impl NetcoreDbg {
 
     pub fn new() -> Self {
         NetcoreDbg {
-            cached_language_server_path: None,
-            cached_roslynls_path: None,
+            cached_netcoredbg_path: None,
         }
     }
 
-    // Debug Adapter Support
     pub fn get_dap_binary(
         &mut self,
         _adapter_name: String,
         config: zed_extension_api::DebugTaskDefinition,
-        user_provided_debug_adapter_path: Option<String>,
+        _user_provided_debug_adapter_path: Option<String>,
         worktree: &zed_extension_api::Worktree,
     ) -> Result<zed_extension_api::DebugAdapterBinary, String> {
         let workspace_folder = worktree.root_path();
@@ -167,7 +158,10 @@ impl NetcoreDbg {
             .map_err(|e| format!("Failed to serialize debug configuration: {e}"))?;
 
         Ok(zed::DebugScenario {
-            label: format!("Debug {}", program.split('/').next_back().unwrap_or(&program)),
+            label: format!(
+                "Debug {}",
+                program.split('/').next_back().unwrap_or(&program)
+            ),
             adapter: config.adapter,
             build: None,
             config: config_str,
@@ -222,13 +216,14 @@ impl NetcoreDbg {
                         break;
                     } else if arg == "--project" {
                         if let Some(project_file) = iter.next() {
-                            let project_path = if project_file.starts_with('/') || project_file.contains(":\\") {
-                                project_file.clone()
-                            } else {
-                                let mut full_path = PathBuf::from(cwd);
-                                full_path.push(project_file);
-                                full_path.to_string_lossy().to_string()
-                            };
+                            let project_path =
+                                if project_file.starts_with('/') || project_file.contains(":\\") {
+                                    project_file.clone()
+                                } else {
+                                    let mut full_path = PathBuf::from(cwd);
+                                    full_path.push(project_file);
+                                    full_path.to_string_lossy().to_string()
+                                };
                             new_args.push(project_path);
                         }
                     } else if !arg.starts_with("--") || arg == "--configuration" || arg == "-c" {
@@ -271,181 +266,5 @@ impl NetcoreDbg {
             config: "null".to_string(),
             tcp_connection: None,
         })
-    }
-
-
-    pub fn run_dap_locator(
-        &mut self,
-        locator_name: String,
-        build_task: zed_extension_api::TaskTemplate,
-    ) -> Result<zed_extension_api::DebugRequest, String> {
-let cwd_str = build_task
-            .cwd
-            .as_ref()
-            .ok_or_else(|| "Build task must have a cwd".to_string())?;
-
-        let mut configuration = String::from("Debug");
-        let mut args_iter = build_task.args.iter().peekable();
-        while let Some(arg) = args_iter.next() {
-            if arg == "--configuration" || arg == "-c" {
-                if let Some(val) = args_iter.next() {
-                    configuration = val.clone();
-                }
-            }
-        }
-
-        let mut project_name: Option<String> = None;
-        let mut project_dir: Option<String> = None;
-        let mut iter = build_task.args.iter();
-        while let Some(arg) = iter.next() {
-            if arg == "--project" {
-                if let Some(path) = iter.next() {
-                    let path_clean = path.replace("${workspaceFolder}", cwd_str);
-                    if let Some(name) = path_clean
-                        .rsplit('/')
-                        .next()
-                        .and_then(|n| n.strip_suffix(".csproj"))
-                    {
-                        project_name = Some(name.to_string());
-                    }
-                    if let Some((dir, _)) = path_clean.rsplit_once('/') {
-                        project_dir = Some(dir.to_string());
-                    } else {
-                        project_dir = Some(cwd_str.to_string());
-                    }
-                }
-                break;
-            } else if arg.ends_with(".csproj") {
-                let path_clean = arg.replace("${workspaceFolder}", cwd_str);
-                if let Some(name) = path_clean
-                    .rsplit('/')
-                    .next()
-                    .and_then(|n| n.strip_suffix(".csproj"))
-                {
-                    project_name = Some(name.to_string());
-                }
-                if let Some((dir, _)) = path_clean.rsplit_once('/') {
-                    project_dir = Some(dir.to_string());
-                } else {
-                    project_dir = Some(cwd_str.to_string());
-                }
-                break;
-            }
-        }
-
-        let proj_name = project_name
-            .ok_or_else(|| "Could not determine project name from build task args".to_string())?;
-
-        let proj_dir = project_dir.unwrap_or_else(|| cwd_str.to_string());
-
-        // Find the DLL using platform-specific search
-        let dll_path = {
-            #[cfg(target_os = "windows")]
-            {
-                // On Windows, use PowerShell's Get-ChildItem (dir)
-                let find_output = zed::process::Command::new("powershell")
-                    .arg("-NoProfile")
-                    .arg("-NonInteractive")
-                    .arg("-Command")
-                    .arg(format!(
-                        "Get-ChildItem -Path '{}/bin/{}' -Filter '{}.dll' -Recurse -File | Select-Object -First 1 -ExpandProperty FullName",
-                        proj_dir, configuration, proj_name
-                    ))
-                    .output();
-
-                match find_output {
-                    Ok(output) => {
-                        if output.status != Some(0) {
-                            let stderr = String::from_utf8_lossy(&output.stderr);
-                            return Err(format!(
-                                "Could not locate DLL: PowerShell command failed: {}",
-                                stderr
-                            ));
-                        }
-
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        let dll = stdout
-                            .lines()
-                            .next()
-                            .ok_or_else(|| {
-                                format!(
-                                    "No DLL found for project '{}' in {}/bin/{}",
-                                    proj_name, proj_dir, configuration
-                                )
-                            })?
-                            .trim()
-                            .to_string();
-
-                        dll
-                    }
-                    Err(e) => {
-                        return Err(format!("Failed to search for DLL: {}", e));
-                    }
-                }
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                // On Unix-like systems, use find
-                let find_output = zed::process::Command::new("find")
-                    .arg(format!("{}/bin/{}", proj_dir, configuration))
-                    .arg("-name")
-                    .arg(format!("{}.dll", proj_name))
-                    .arg("-type")
-                    .arg("f")
-                    .output();
-
-                match find_output {
-                    Ok(output) => {
-                        if output.status != Some(0) {
-                            let stderr = String::from_utf8_lossy(&output.stderr);
-                            return Err(format!(
-                                "Could not locate DLL: find command failed: {}",
-                                stderr
-                            ));
-                        }
-
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        let dll = stdout
-                            .lines()
-                            .next()
-                            .ok_or_else(|| {
-                                format!(
-                                    "No DLL found for project '{}' in {}/bin/{}",
-                                    proj_name, proj_dir, configuration
-                                )
-                            })?
-                            .trim()
-                            .to_string();
-
-                        dll
-                    }
-                    Err(e) => {
-                        return Err(format!("Failed to search for DLL: {}", e));
-                    }
-                }
-            }
-        };
-
-        let mut args: Vec<String> = Vec::new();
-        let mut envs = build_task.env.clone();
-        if let Some((idx, (_, val))) = envs
-            .iter()
-            .enumerate()
-            .find(|(_, (k, _))| k == "ZED_DOTNET_PROGRAM_ARGS")
-        {
-            if let Ok(restored) = serde_json::from_str::<Vec<String>>(val) {
-                args = restored;
-            }
-            envs.remove(idx);
-        }
-
-        let request = zed::DebugRequest::Launch(zed::LaunchRequest {
-            program: dll_path,
-            cwd: Some(cwd_str.to_string()),
-            args: args.clone(),
-            envs: envs.clone(),
-        });
-
-        Ok(request)
     }
 }

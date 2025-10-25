@@ -59,14 +59,13 @@ impl zed::Extension for CsharpExtension {
         worktree: &zed_extension_api::Worktree,
     ) -> Result<zed_extension_api::DebugAdapterBinary, String> {
         if adapter_name == NetcoreDbg::DEBUG_ADAPTER_ID {
-            if let Some(netcoredbg) = self.netcoredbg.as_mut() {
-                return netcoredbg.get_dap_binary(
-                    adapter_name,
-                    config,
-                    user_provided_debug_adapter_path,
-                    worktree,
-                );
-            }
+            let netcoredbg = self.netcoredbg.get_or_insert_with(NetcoreDbg::new);
+            return netcoredbg.get_dap_binary(
+                adapter_name,
+                config,
+                user_provided_debug_adapter_path,
+                worktree,
+            );
         }
 
         Err(format!("unknown debug adapter: {adapter_name}"))
@@ -78,9 +77,8 @@ impl zed::Extension for CsharpExtension {
         config: serde_json::Value,
     ) -> Result<zed_extension_api::StartDebuggingRequestArgumentsRequest, String> {
         if adapter_name == NetcoreDbg::DEBUG_ADAPTER_ID {
-            if let Some(netcoredbg) = self.netcoredbg.as_mut() {
-                return netcoredbg.dap_request_kind(adapter_name, config);
-            }
+            let netcoredbg = self.netcoredbg.get_or_insert_with(NetcoreDbg::new);
+            return netcoredbg.dap_request_kind(adapter_name, config);
         }
 
         Err(format!("unknown debug adapter: {adapter_name}"))
@@ -90,11 +88,8 @@ impl zed::Extension for CsharpExtension {
         &mut self,
         config: zed_extension_api::DebugConfig,
     ) -> Result<zed_extension_api::DebugScenario, String> {
-        if let Some(netcoredbg) = self.netcoredbg.as_mut() {
-            return netcoredbg.dap_config_to_scenario(config);
-        }
-
-        Err(format!("unknown debug adapter"))
+        let netcoredbg = self.netcoredbg.get_or_insert_with(NetcoreDbg::new);
+        return netcoredbg.dap_config_to_scenario(config);
     }
 
     fn dap_locator_create_scenario(
@@ -104,7 +99,8 @@ impl zed::Extension for CsharpExtension {
         resolved_label: String,
         debug_adapter_name: String,
     ) -> Option<zed_extension_api::DebugScenario> {
-        if let Some(netcoredbg) = self.netcoredbg.as_mut() {
+        if locator_name == NetcoreDbg::DEBUG_ADAPTER_ID {
+            let netcoredbg = self.netcoredbg.get_or_insert_with(NetcoreDbg::new);
             return netcoredbg.dap_locator_create_scenario(
                 locator_name,
                 build_task,
@@ -114,18 +110,6 @@ impl zed::Extension for CsharpExtension {
         }
 
         None
-    }
-
-    fn run_dap_locator(
-        &mut self,
-        locator_name: String,
-        build_task: zed_extension_api::TaskTemplate,
-    ) -> Result<zed_extension_api::DebugRequest, String> {
-        if let Some(netcoredbg) = self.netcoredbg.as_mut() {
-            return netcoredbg.run_dap_locator(locator_name, build_task);
-        }
-
-        Err(format!("unknown debug adapter: {locator_name}"))
     }
 }
 
