@@ -14,6 +14,10 @@ repository = "https://github.com/fallenwood/zed-roslynls"
 name = "Roslyn"
 language = "CSharp"
 
+[debug_adapters.netcoredbg]
+
+[debug_locators.dotnet]
+
 [grammars.c_sharp]
 repository = "https://github.com/tree-sitter/tree-sitter-c-sharp"
 commit = "dd5e59721a5f8dae34604060833902b882023aaf"

@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "C# Debug Configuration",
+  "type": "object",
+  "required": ["request", "program"],
+  "properties": {
+    "request": {
+      "type": "string",
+      "enum": ["launch", "attach"],
+      "description": "Launch a new process or attach to existing"
+    },
+    "program": {
+      "type": "string",
+      "description": "Path to the .NET executable to debug (e.g., bin/Debug/net8.0/MyApp.dll)"
+    },
+    "args": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Command line arguments passed to the program"
+    },
+    "cwd": {
+      "type": "string",
+      "description": "Working directory for the program",
+      "default": "${workspaceFolder}"
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Environment variables"
+    },
+    "stopAtEntry": {
+      "type": "boolean",
+      "default": false,
+      "description": "Stop at entry point of the program"
+    },
+    "console": {
+      "type": "string",
+      "enum": ["internalConsole", "integratedTerminal", "externalTerminal"],
+      "default": "internalConsole",
+      "description": "Where to launch the debug target"
+    },
+    "processId": {
+      "type": ["string", "number"],
+      "description": "Process ID to attach to (for attach requests only)"
+    },
+    "justMyCode": {
+      "type": "boolean",
+      "default": true,
+      "description": "Only debug user code, skip framework code"
+    },
+    "enableStepFiltering": {
+      "type": "boolean",
+      "default": true,
+      "description": "Skip over properties and operators"
+    },
+    "logging": {
+      "type": "object",
+      "properties": {
+        "moduleLoad": { "type": "boolean", "default": false },
+        "exceptions": { "type": "boolean", "default": true },
+        "programOutput": { "type": "boolean", "default": true }
+      }
+    }
+  }
+}
