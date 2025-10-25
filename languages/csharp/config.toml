@@ -2,6 +2,7 @@ name = "CSharp"
 code_fence_block_name = "csharp"
 grammar = "c_sharp"
 path_suffixes = ["cs"]
+debuggers = ["netcoredbg"]
 line_comments = ["// ", "/// "]
 autoclose_before = ";:.,=}])>"
 brackets = [
