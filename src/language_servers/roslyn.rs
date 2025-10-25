@@ -206,6 +206,17 @@ impl Roslyn {
         } else if let Some(cached_path) = &self.cached_roslynls_path {
             cached_path.clone()
         } else {
+            let download_path =
+                utils::get_version_dir(ROSLYNLS.to_string(), ROSLYNLS_TAG.to_string());
+
+            if std::fs::metadata(&download_path).is_ok() {
+                println!(
+                    "[zed-roslynls] roslynls already downloaded at: {}",
+                    download_path
+                );
+                return download_path;
+            }
+
             match zed::github_release_by_tag_name(ROSLYNLS_REPO, ROSLYNLS_TAG) {
                 Ok(release) => {
                     let roslynls = Self::get_roslynls_package_id();
@@ -215,14 +226,6 @@ impl Roslyn {
 
                     if let Some(asset) = asset {
                         let download_url = &asset.download_url;
-                        let download_path =
-                            utils::get_version_dir(ROSLYNLS.to_string(), ROSLYNLS_TAG.to_string());
-
-                        if std::fs::metadata(&download_path).is_ok() {
-                            println!("[zed-roslynls] roslynls already downloaded at: {}", download_path);
-                            return download_path;
-                        }
-
                         println!(
                             "[zed-roslynls] Downloading roslynls from: {}, to: {}",
                             download_url, download_path
@@ -290,7 +293,10 @@ impl Roslyn {
             "https://pkgs.dev.azure.com/{ORGANIZATION}/{PROJECT}/_packaging/{FEED}/nuget/v3/flat2/{package_id}/{version}/{asset_name}"
         );
 
-        println!("[zed-roslynls] Downloading Roslyn Language Server from: {}", url.clone());
+        println!(
+            "[zed-roslynls] Downloading Roslyn Language Server from: {}",
+            url.clone()
+        );
 
         let version_dir = utils::get_version_dir(package_id, version);
 
