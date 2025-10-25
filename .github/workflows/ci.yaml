@@ -71,6 +71,15 @@ jobs:
             -o wrapper/output-win-x64
           mv wrapper/output-win-x64/roslynls.exe wrapper/output-win-x64/roslynls-win-x64.exe
 
+      - name: Publish wrapper (windows-arm64)
+        shell: pwsh
+        run: |
+          dotnet publish wrapper/roslynls.csproj `
+            -c Release `
+            -r win-arm64 `
+            -o wrapper/output-win-arm64
+          mv wrapper/output-win-arm64/roslynls.exe wrapper/output-win-arm64/roslynls-win-arm64.exe
+
       - name: Publish wrapper (linux-x64)
         shell: pwsh
         run: |
@@ -80,11 +89,20 @@ jobs:
             -o wrapper/output-linux-x64
           mv wrapper/output-linux-x64/roslynls wrapper/output-linux-x64/roslynls-linux-x64
 
+      - name: Publish wrapper (linux-x64)
+        shell: pwsh
+        run: |
+          dotnet publish wrapper/roslynls.csproj `
+            -c Release `
+            -r linux-musl-arm64 `
+            -o wrapper/output-linux-arm64
+          mv wrapper/output-linux-arm64/roslynls wrapper/output-linux-arm64/roslynls-linux-arm64
+
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            wrapper/output-linux-x64/roslynls-linux-x64
             wrapper/output-win-x64/roslynls-win-x64.exe
-#        env:
-#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            wrapper/output-win-arm64/roslynls-win-arm64.exe
+            wrapper/output-linux-x64/roslynls-linux-x64
+            wrapper/output-linux-arm64/roslynls-linux-arm64
