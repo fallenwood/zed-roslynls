@@ -39,7 +39,7 @@ jobs:
 
   release:
     needs: [build]
-    if: github.event.inputs.release != ''
+    if: github.event.inputs.release != '' && github.ref_type == 'tag'
     runs-on: windows-latest
     permissions:
       contents: write
@@ -60,31 +60,49 @@ jobs:
       - name: Setup LLVM
         uses: KyleMayes/install-llvm-action@v2
         with:
-          version: "21.1"
+          version: "20.1.0"
 
       - name: Publish wrapper (windows-x64)
         shell: pwsh
         run: |
-          dotnet publish wrapper/roslynls.csproj \
-            -c Release \
-            -r win-x64 \
+          dotnet publish wrapper/roslynls.csproj `
+            -c Release `
+            -r win-x64 `
             -o wrapper/output-win-x64
           mv wrapper/output-win-x64/roslynls.exe wrapper/output-win-x64/roslynls-win-x64.exe
+
+      - name: Publish wrapper (windows-arm64)
+        shell: pwsh
+        run: |
+          dotnet publish wrapper/roslynls.csproj `
+            -c Release `
+            -r win-arm64 `
+            -o wrapper/output-win-arm64
+          mv wrapper/output-win-arm64/roslynls.exe wrapper/output-win-arm64/roslynls-win-arm64.exe
 
       - name: Publish wrapper (linux-x64)
         shell: pwsh
         run: |
-          dotnet publish wrapper/roslynls.csproj \
-            -c Release \
-            -r linux-x64-musl \
+          dotnet publish wrapper/roslynls.csproj `
+            -c Release `
+            -r linux-musl-x64 `
             -o wrapper/output-linux-x64
           mv wrapper/output-linux-x64/roslynls wrapper/output-linux-x64/roslynls-linux-x64
+
+      - name: Publish wrapper (linux-arm64)
+        shell: pwsh
+        run: |
+          dotnet publish wrapper/roslynls.csproj `
+            -c Release `
+            -r linux-musl-arm64 `
+            -o wrapper/output-linux-arm64
+          mv wrapper/output-linux-arm64/roslynls wrapper/output-linux-arm64/roslynls-linux-arm64
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            wrapper/output-linux-x64/roslynls
-            wrapper/output-win-x64/roslynls.exe
-#        env:
-#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            wrapper/output-win-x64/roslynls-win-x64.exe
+            wrapper/output-win-arm64/roslynls-win-arm64.exe
+            wrapper/output-linux-x64/roslynls-linux-x64
+            wrapper/output-linux-arm64/roslynls-linux-arm64
