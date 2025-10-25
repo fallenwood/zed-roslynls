@@ -1,4 +1,4 @@
-use std::fs;
+use std::fs::{self, FileType};
 use zed_extension_api::{
     self as zed, LanguageServerId, Result, serde_json::Map, settings::LspSettings,
 };
@@ -9,15 +9,18 @@ use crate::utils;
 const ORGANIZATION: &str = "azure-public";
 const PROJECT: &str = "vside";
 const FEED: &str = "vs-impl";
+const ROSLYNLS: &str = "roslynls";
 const ROSLYNLS_PATH_KEY: &str = "roslynls_path";
+const ROSLYNLS_REPO: &str = "fallenwood/zed-roslynls";
+const ROSLYNLS_TAG: &str = "v0.0.2";
 const LANGUAGE_SERVER: &str = "Microsoft.CodeAnalysis.LanguageServer";
 
 // Example version
 // const PACKAGE_VERSION: &str = "5.1.0-1.25476.5";
 
 pub struct Roslyn {
-    cached_binary_path: Option<String>,
-    cached_wrapper_path: Option<String>,
+    cached_language_server_path: Option<String>,
+    cached_roslynls_path: Option<String>,
 }
 
 impl Roslyn {
@@ -25,8 +28,8 @@ impl Roslyn {
 
     pub fn new() -> Self {
         Roslyn {
-            cached_binary_path: None,
-            cached_wrapper_path: None,
+            cached_language_server_path: None,
+            cached_roslynls_path: None,
         }
     }
 
@@ -35,12 +38,11 @@ impl Roslyn {
         _language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        // TODO: use configured wrapper path
         let settings = LspSettings::for_worktree(Self::LANGUAGE_SERVER_ID, worktree).ok();
 
         let roslynls_path = self.ensure_roslynls(worktree);
 
-        self.cached_wrapper_path = Some(roslynls_path.clone());
+        self.cached_roslynls_path = Some(roslynls_path.clone());
 
         let binary_settings = settings.and_then(|lsp_settings| lsp_settings.binary);
         let binary_args = binary_settings
@@ -50,7 +52,7 @@ impl Roslyn {
         if let Some(path) = binary_settings
             .and_then(|binary_settings| binary_settings.path)
             .or_else(|| {
-                self.cached_binary_path
+                self.cached_language_server_path
                     .as_ref()
                     .filter(|path| fs::metadata(path).map_or(false, |stat| stat.is_file()))
                     .cloned()
@@ -75,7 +77,7 @@ impl Roslyn {
             );
         }
 
-        if let Some(path) = &self.cached_binary_path
+        if let Some(path) = &self.cached_language_server_path
             && fs::metadata(path).map_or(false, |stat| stat.is_file())
         {
             return Self::cmd(
@@ -89,7 +91,7 @@ impl Roslyn {
         let binary_path = Self::get_langauge_server_binary_path(executable.as_str());
 
         if fs::metadata(binary_path.clone()).map_or(false, |stat| stat.is_file()) {
-            self.cached_binary_path = Some(binary_path.clone());
+            self.cached_language_server_path = Some(binary_path.clone());
 
             return Self::cmd(
                 roslynls_path,
@@ -101,7 +103,7 @@ impl Roslyn {
 
         let binary_path = Self::ensure_language_server()?;
 
-        self.cached_binary_path = Some(binary_path.clone());
+        self.cached_language_server_path = Some(binary_path.clone());
 
         Self::cmd(
             roslynls_path,
@@ -155,20 +157,20 @@ impl Roslyn {
     }
 
     fn cmd(
-        wrapper_path: String,
-        lsp_path: String,
+        roslynls_path: String,
+        language_server_path: String,
         project_root: String,
         binary_args: Option<Vec<String>>,
     ) -> Result<zed::Command> {
         let default_args: Vec<String> = vec![
             "--lsp".into(),
-            lsp_path,
+            language_server_path,
             "--project-root".into(),
             project_root,
         ];
 
         return Ok(zed::Command {
-            command: wrapper_path,
+            command: roslynls_path,
             args: binary_args.unwrap_or(default_args),
             env: Default::default(),
         });
@@ -177,7 +179,7 @@ impl Roslyn {
     fn ensure_roslynls(self: &mut Self, worktree: &zed::Worktree) -> String {
         let settings = LspSettings::for_worktree(Self::LANGUAGE_SERVER_ID, worktree).ok();
 
-        let wrapper_path = settings
+        let roslynls_path = settings
             .as_ref()
             .and_then(|lsp_settings| lsp_settings.settings.as_ref())
             .and_then(|lsp_settings| {
@@ -194,14 +196,64 @@ impl Roslyn {
                 }
             });
 
-        if let Some(path) = wrapper_path {
+        println!(
+            "[zed-roslynls] roslynls_path: {}",
+            roslynls_path.clone().unwrap_or("None".to_string())
+        );
+
+        if let Some(path) = roslynls_path {
             path
-        } else if let Some(cached_path) = &self.cached_wrapper_path {
+        } else if let Some(cached_path) = &self.cached_roslynls_path {
             cached_path.clone()
         } else {
-            println!("No roslynls wrapper found");
-            // TODO: download roslynls wrapper
-            "roslynls".into()
+            match zed::github_release_by_tag_name(ROSLYNLS_REPO, ROSLYNLS_TAG) {
+                Ok(release) => {
+                    let roslynls = Self::get_roslynls_package_id();
+                    let asset = release.assets.iter().find(|asset| asset.name == roslynls);
+
+                    println!("[zed-roslynls] Found asset: {:?} {:?}", roslynls, asset);
+
+                    if let Some(asset) = asset {
+                        let download_url = &asset.download_url;
+                        let download_path =
+                            utils::get_version_dir(ROSLYNLS.to_string(), ROSLYNLS_TAG.to_string());
+
+                        if std::fs::metadata(&download_path).is_ok() {
+                            println!("[zed-roslynls] roslynls already downloaded at: {}", download_path);
+                            return download_path;
+                        }
+
+                        println!(
+                            "[zed-roslynls] Downloading roslynls from: {}, to: {}",
+                            download_url, download_path
+                        );
+
+                        zed::download_file(
+                            download_url,
+                            download_path.as_str(),
+                            zed::DownloadedFileType::Uncompressed,
+                        )
+                        .expect("Failed to download roslynls");
+
+                        zed::make_file_executable(download_path.as_str())
+                            .expect("Failed to make roslynls executable");
+
+                        download_path
+                    } else {
+                        println!(
+                            "[zed-roslynls] No suitable roslynls asset found for the current platform"
+                        );
+                        roslynls
+                    }
+                }
+                Err(e) => {
+                    println!(
+                        "[zed-roslynls] Failed to fetch roslynls release info: {}",
+                        e
+                    );
+                    ROSLYNLS.to_string()
+                }
+            }
         }
     }
 
@@ -238,7 +290,7 @@ impl Roslyn {
             "https://pkgs.dev.azure.com/{ORGANIZATION}/{PROJECT}/_packaging/{FEED}/nuget/v3/flat2/{package_id}/{version}/{asset_name}"
         );
 
-        println!("Downloading Roslyn Language Server from: {}", url.clone());
+        println!("[zed-roslynls] Downloading Roslyn Language Server from: {}", url.clone());
 
         let version_dir = utils::get_version_dir(package_id, version);
 
@@ -251,6 +303,27 @@ impl Roslyn {
             let entry = entry.map_err(|e| format!("failed to load directory entry {e}"))?;
             if entry.file_name().to_str() != Some(&version_dir) {
                 fs::remove_dir_all(entry.path()).ok();
+            }
+        }
+
+        let entries = fs::read_dir(&version_dir)
+            .map_err(|e| format!("failed to list version directory {e}"))?;
+        let mut q = std::collections::VecDeque::from_iter(entries);
+        while !q.is_empty() {
+            let entry = q.pop_front().unwrap();
+            let entry = entry.map_err(|e| format!("failed to load directory entry {e}"))?;
+            let filetype = entry
+                .file_type()
+                .map_err(|e| format!("failed to get file type {e}"))?;
+            if filetype.is_dir() {
+                let sub_entries = fs::read_dir(entry.path())
+                    .map_err(|e| format!("failed to list sub-directory {e}"))?;
+                for sub_entry in sub_entries {
+                    q.push_back(sub_entry);
+                }
+            } else if filetype.is_file() {
+                zed::make_file_executable(entry.path().to_str().unwrap())
+                    .map_err(|e| format!("failed to make file executable {e}"))?;
             }
         }
 
@@ -281,6 +354,12 @@ impl Roslyn {
         format!("{LANGUAGE_SERVER}.{runtime_identifier}")
     }
 
+    fn get_roslynls_package_id() -> String {
+        let runtime_identifier = Self::get_runtime_identifier();
+
+        format!("{ROSLYNLS}-{runtime_identifier}")
+    }
+
     fn get_language_server_latest_version() -> Result<String, String> {
         let package_id = Self::get_langauge_server_package_id();
         let url = format!(
@@ -288,7 +367,7 @@ impl Roslyn {
         );
 
         println!(
-            "Fetching latest Roslyn Language Server version from: {}",
+            "[zed-roslynls] Fetching latest Roslyn Language Server version from: {}",
             url.clone()
         );
 
