@@ -89,7 +89,7 @@ jobs:
             -o wrapper/output-linux-x64
           mv wrapper/output-linux-x64/roslynls wrapper/output-linux-x64/roslynls-linux-x64
 
-      - name: Publish wrapper (linux-x64)
+      - name: Publish wrapper (linux-arm64)
         shell: pwsh
         run: |
           dotnet publish wrapper/roslynls.csproj `
