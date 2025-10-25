@@ -60,7 +60,7 @@ jobs:
       - name: Setup LLVM
         uses: KyleMayes/install-llvm-action@v2
         with:
-          version: "21.1"
+          version: "21.1.0"
 
       - name: Publish wrapper (windows-x64)
         shell: pwsh
