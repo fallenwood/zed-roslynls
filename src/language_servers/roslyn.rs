@@ -390,7 +390,4 @@ impl Roslyn {
 
         Ok(package.version.clone())
     }
-
-    // fn make_executable(path: &str) -> Result<()> {
-    // }
 }
