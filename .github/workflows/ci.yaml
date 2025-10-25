@@ -65,18 +65,18 @@ jobs:
       - name: Publish wrapper (windows-x64)
         shell: pwsh
         run: |
-          dotnet publish wrapper/roslynls.csproj \
-            -c Release \
-            -r win-x64 \
+          dotnet publish wrapper/roslynls.csproj `
+            -c Release `
+            -r win-x64 `
             -o wrapper/output-win-x64
           mv wrapper/output-win-x64/roslynls.exe wrapper/output-win-x64/roslynls-win-x64.exe
 
       - name: Publish wrapper (linux-x64)
         shell: pwsh
         run: |
-          dotnet publish wrapper/roslynls.csproj \
-            -c Release \
-            -r linux-x64-musl \
+          dotnet publish wrapper/roslynls.csproj `
+            -c Release `
+            -r linux-x64-musl `
             -o wrapper/output-linux-x64
           mv wrapper/output-linux-x64/roslynls wrapper/output-linux-x64/roslynls-linux-x64
 
@@ -84,7 +84,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            wrapper/output-linux-x64/roslynls
-            wrapper/output-win-x64/roslynls.exe
+            wrapper/output-linux-x64/roslynls-linux-x64
+            wrapper/output-win-x64/roslynls-win-x64.exe
 #        env:
 #          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
