@@ -1,0 +1,13 @@
+[
+  {
+    "label": "app",
+    "adapter": "netcoredbg",
+    "program": "app/bin/Debug/net9.0/app.dll",
+    "request": "launch",
+    "stopAtEntry": true,
+    "build": {
+      "command": "dotnet",
+      "args": ["build", "app"]
+    }
+  }
+]
