@@ -39,7 +39,7 @@ jobs:
 
   release:
     needs: [build]
-    if: github.event.inputs.release != ''
+    if: github.event.inputs.release != '' && github.ref_type == 'tag'
     runs-on: windows-latest
     permissions:
       contents: write
