@@ -1,38 +1,23 @@
-(class_declaration
-    "class" @context
-    name: (identifier) @name
-) @item
+(class_declaration name: (identifier) @name) @definition.class
 
-(constructor_declaration
-    name: (identifier) @name
-) @item
+(class_declaration (base_list (_) @name)) @reference.class
 
-(property_declaration
-    type: (identifier)? @context
-    type: (predefined_type)? @context
-    name: (identifier) @name
-) @item
+(interface_declaration name: (identifier) @name) @definition.interface
 
-(field_declaration
-    (variable_declaration) @context
-) @item
+(interface_declaration (base_list (_) @name)) @reference.interface
 
-(method_declaration
-    name: (identifier) @name
-    parameters: (parameter_list) @context
-) @item
+(method_declaration name: (identifier) @name) @definition.method
 
-(enum_declaration
-    "enum" @context
-    name: (identifier) @name
-) @item
+(object_creation_expression type: (identifier) @name) @reference.class
 
-(namespace_declaration
-    "namespace" @context
-    name: (qualified_name) @name
-) @item
+(type_parameter_constraints_clause (identifier) @name) @reference.class
 
-(interface_declaration
-    "interface" @context
-    name: (identifier) @name
-) @item
+(type_parameter_constraint (type type: (identifier) @name)) @reference.class
+
+(variable_declaration type: (identifier) @name) @reference.class
+
+(invocation_expression function: (member_access_expression name: (identifier) @name)) @reference.send
+
+(namespace_declaration name: (identifier) @name) @definition.module
+
+(namespace_declaration name: (identifier) @name) @module
