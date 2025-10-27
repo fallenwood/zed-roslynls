@@ -118,9 +118,7 @@ public sealed class MessageProcessor
                     messageText = EnrichTextDocumentDiagnosticRequest(messageText);
                 }
 
-                var messageBytes = Encoding.UTF8.GetBytes($"Content-Length: {messageText.Length}\r\n\r\n{messageText}");
-
-                await writer.WriteAsync(messageBytes, cancellationToken);
+                _ = await writer.WriteLspMessageAsync(messageText, cancellationToken);
 
                 if (!initialized && messageText.Contains("initialize", StringComparison.Ordinal))
                 {
@@ -275,9 +273,8 @@ public sealed class MessageProcessor
     {
         var json = JsonSerializer.Serialize(notification, typeInfo);
 
-        var message = $"Content-Length: {json.Length}\r\n\r\n{json}";
-        var bytes = Encoding.UTF8.GetBytes(message);
-        await writer.WriteAsync(bytes, cancellationToken);
+        var bytes = await writer.WriteLspMessageAsync(json, cancellationToken);
+
         await this.lspLogger.WriteAsync(bytes);
         await this.lspLogger.FlushAsync();
     }
