@@ -64,6 +64,12 @@ public sealed class MessageProcessor
         var logPath = Path.Join(Path.GetTempPath(), "zed-roslynls", Path.GetFileNameWithoutExtension(this.projectRoot));
 
         var process = new System.Diagnostics.Process();
+
+        var now = DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+        var pipeName = $"MicrosoftCodeAnalysisLanguageServer-{now}";
+
+        using var pipe = new System.IO.Pipes.NamedPipeServerStream(pipeName, System.IO.Pipes.PipeDirection.InOut, maxNumberOfServerInstances: 1, System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.Asynchronous);
+
         process.StartInfo.FileName = lsp;
         process.StartInfo.UseShellExecute = false;
         process.StartInfo.RedirectStandardInput = true;
@@ -74,14 +80,15 @@ public sealed class MessageProcessor
         process.StartInfo.ArgumentList.Add("Information");
         process.StartInfo.ArgumentList.Add("--extensionLogDirectory");
         process.StartInfo.ArgumentList.Add(logPath);
-        process.StartInfo.ArgumentList.Add("--stdio");
+        process.StartInfo.ArgumentList.Add("--pipe");
+        process.StartInfo.ArgumentList.Add(pipeName);
         process.Start();
 
         var consoleInput = Console.OpenStandardInput();
         var consoleOutput = Console.OpenStandardOutput();
         var consoleError = Console.OpenStandardError();
-        var serverInput = process.StandardInput.BaseStream;
-        var serverOutput = process.StandardOutput.BaseStream;
+        var serverInput = pipe;
+        var serverOutput = pipe;
         var serverError = process.StandardError.BaseStream;
 
         var outputTask = serverOutput.CopyToAsync(consoleOutput, cancellationToken);
