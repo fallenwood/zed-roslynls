@@ -2,13 +2,12 @@ using ConsoleAppFramework;
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using ZedRoslynLS;
 
 await ConsoleApp.RunAsync(args,
-    static async (string lsp, string projectRoot, string? logFilePath = null, CancellationToken cancellationToken = default) =>
+    static async (string lsp, string projectRoot, string? logFilePath = null, RpcType wrapperRpcType = RpcType.Stdio, RpcType lspRpcType = RpcType.NamedPipe, CancellationToken cancellationToken = default) =>
     {
         var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
@@ -36,17 +35,25 @@ await ConsoleApp.RunAsync(args,
             ? new LspNoopLogger()
             : new LspFileLogger(logFilePath);
 
-        var processor = MessageProcessor.Create(projectRoot, lsp, logger);
+        var processor = MessageProcessor.Create(projectRoot, wrapperRpcType, lsp, lspRpcType, logger);
 
         _ = Task.Factory.StartNew(async () =>
         {
             var monitor = new ProcessMonitor();
+            Console.Error.WriteLine($"Monitoring parent process ID \"{monitor.ParentProcessId}\"");
             var exited = await monitor.WaitForParentExit(cts);
             if (exited)
             {
+                Console.Error.WriteLine("Parent process exited. Shutting down wrapper.");
                 cts.Cancel();
             }
         }, TaskCreationOptions.LongRunning);
 
         await processor.ProcessAsync(cts.Token);
     });
+
+public enum RpcType
+{
+    Stdio,
+    NamedPipe,
+}
