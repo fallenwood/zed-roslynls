@@ -4,6 +4,7 @@ using System;
 using System.Buffers;
 using System.IO;
 using System.IO.Pipelines;
+using System.IO.Pipes;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -14,22 +15,29 @@ using System.Threading.Tasks;
 
 public sealed class MessageProcessor
 {
+    private const string WrapperPipeName = "ZedRoslynLS";
+    private const string LspPipeName = "MicrosoftCodeAnalysisLanguageServer";
+
     private readonly string projectRoot;
     private readonly string solution;
     private readonly string[] projects;
     private readonly string lsp;
     private readonly ILspLogger lspLogger;
+    private readonly RpcType wrapperRpcType;
+    private readonly RpcType lspRpcType;
 
-    private MessageProcessor(string projectRoot, string solution, string[] projects, string lsp, ILspLogger lspLogger)
+    private MessageProcessor(string projectRoot, string solution, string[] projects, RpcType wrapperRpcType, string lsp, RpcType lspRpcType, ILspLogger lspLogger)
     {
         this.projectRoot = projectRoot;
         this.solution = solution;
         this.projects = projects;
         this.lsp = lsp;
         this.lspLogger = lspLogger;
+        this.wrapperRpcType = wrapperRpcType;
+        this.lspRpcType = lspRpcType;
     }
 
-    public static MessageProcessor Create(string projectRoot, string lsp, ILspLogger lspLogger)
+    public static MessageProcessor Create(string projectRoot, RpcType wrapperRpcType, string lsp, RpcType lspRpcType, ILspLogger lspLogger)
     {
         var solutions = Array.Empty<string>();
         var projects = Array.Empty<string>();
@@ -56,13 +64,12 @@ public sealed class MessageProcessor
 
         var projectUris = projects.Select(p => new Uri(p).AbsoluteUri).ToArray();
 
-        return new(projectRoot, solutionUri, projectUris, lsp, lspLogger);
+        return new(projectRoot, solutionUri, projectUris, wrapperRpcType, lsp, lspRpcType, lspLogger);
     }
 
     public async Task ProcessAsync(CancellationToken cancellationToken)
     {
         var logPath = Path.Join(Path.GetTempPath(), "zed-roslynls", Path.GetFileNameWithoutExtension(this.projectRoot));
-
         var process = new System.Diagnostics.Process();
         process.StartInfo.FileName = lsp;
         process.StartInfo.UseShellExecute = false;
@@ -74,28 +81,61 @@ public sealed class MessageProcessor
         process.StartInfo.ArgumentList.Add("Information");
         process.StartInfo.ArgumentList.Add("--extensionLogDirectory");
         process.StartInfo.ArgumentList.Add(logPath);
-        process.StartInfo.ArgumentList.Add("--stdio");
-        process.Start();
+
+
+        if (this.wrapperRpcType != RpcType.Stdio)
+        {
+            Console.Error.WriteLine("Only stdio wrapper RPC type is supported.");
+            throw new NotSupportedException("Only stdio wrapper RPC type is supported.");
+        }
 
         var consoleInput = Console.OpenStandardInput();
         var consoleOutput = Console.OpenStandardOutput();
         var consoleError = Console.OpenStandardError();
-        var serverInput = process.StandardInput.BaseStream;
-        var serverOutput = process.StandardOutput.BaseStream;
-        var serverError = process.StandardError.BaseStream;
 
-        var outputTask = serverOutput.CopyToAsync(consoleOutput, cancellationToken);
-        var errorTask = serverError.CopyToAsync(consoleError, cancellationToken);
-        var inputTask = this.ProcessInputAsync(consoleInput, serverInput, cancellationToken);
+        if (this.lspRpcType == RpcType.Stdio)
+        {
+            process.StartInfo.ArgumentList.Add("--stdio");
+            process.Start();
 
-        await Task.WhenAll(outputTask, inputTask, errorTask);
+            var serverInput = process.StandardInput.BaseStream;
+            var serverOutput = process.StandardOutput.BaseStream;
+            var serverError = process.StandardError.BaseStream;
+
+            var outputTask = this.ProcessOutputAsync(consoleOutput, serverOutput, cancellationToken);
+            var errorTask = serverError.CopyToAsync(consoleError, cancellationToken);
+            var inputTask = this.ProcessInputAsync(consoleInput, serverInput, cancellationToken);
+
+            await Task.WhenAll(outputTask, inputTask, errorTask);
+            await process.WaitForExitAsync(cancellationToken);
+        }
+        else if (this.lspRpcType == RpcType.NamedPipe)
+        {
+            process.StartInfo.ArgumentList.Add("--pipe");
+            process.StartInfo.ArgumentList.Add(LspPipeName);
+            process.Start();
+
+            using var pipe = new NamedPipeClientStream(".", LspPipeName, PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
+
+            await pipe.ConnectAsync(cancellationToken);
+
+            var serverInput = pipe;
+            var serverOutput = pipe;
+            var serverError = process.StandardError.BaseStream;
+
+            var outputTask = this.ProcessOutputAsync(consoleOutput, serverOutput, cancellationToken);
+            var errorTask = serverError.CopyToAsync(consoleError, cancellationToken);
+            var inputTask = this.ProcessInputAsync(consoleInput, serverInput, cancellationToken);
+
+            await Task.WhenAll(outputTask, inputTask, errorTask);
+        }
+
         await process.WaitForExitAsync(cancellationToken);
     }
 
     private async Task ProcessOutputAsync(Stream consoleOutput, Stream serverOutput, CancellationToken cancellationToken)
     {
-        var reader = PipeReader.Create(serverOutput);
-        var writer = PipeWriter.Create(consoleOutput);
+        await serverOutput.CopyToAsync(consoleOutput, cancellationToken);
     }
 
     private async Task ProcessInputAsync(Stream consoleInput, Stream serverInput, CancellationToken cancellationToken)

@@ -15,6 +15,8 @@ public partial class ProcessMonitor
         parentProcessId = GetParentProcessId();
     }
 
+    public int? ParentProcessId => parentProcessId;
+
     public async Task<bool> WaitForParentExit(CancellationTokenSource cancellationTokenSource)
     {
         if (parentProcessId == null)
