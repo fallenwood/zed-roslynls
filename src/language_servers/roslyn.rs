@@ -11,6 +11,8 @@ const PROJECT: &str = "vside";
 const FEED: &str = "vs-impl";
 const ROSLYNLS: &str = "roslynls";
 const ROSLYNLS_PATH_KEY: &str = "roslynls_path";
+const LANGUAGE_SERVER_VERSION_KEY: &str = "language_server_version";
+const LANGUAGE_SERVER_PATH: &str = "language_server_path";
 const ROSLYNLS_REPO: &str = "fallenwood/zed-roslynls";
 const ROSLYNLS_TAG: &str = "v0.0.2";
 const LANGUAGE_SERVER: &str = "Microsoft.CodeAnalysis.LanguageServer";
@@ -44,23 +46,50 @@ impl Roslyn {
 
         self.cached_roslynls_path = Some(roslynls_path.clone());
 
-        let binary_settings = settings.and_then(|lsp_settings| lsp_settings.binary);
+        let binary_settings = settings.as_ref().and_then(|lsp_settings| lsp_settings.binary.as_ref());
         let binary_args = binary_settings
             .as_ref()
             .and_then(|binary_settings| binary_settings.arguments.clone());
 
-        if let Some(path) = binary_settings
-            .and_then(|binary_settings| binary_settings.path)
-            .or_else(|| {
-                self.cached_language_server_path
-                    .as_ref()
-                    .filter(|path| fs::metadata(path).map_or(false, |stat| stat.is_file()))
-                    .cloned()
-            })
-        {
+        // ignore binary path
+        // if let Some(path) = binary_settings
+        //     .and_then(|binary_settings| binary_settings.path)
+        //     .or_else(|| {
+        //         self.cached_language_server_path
+        //             .as_ref()
+        //             .filter(|path| fs::metadata(path).map_or(false, |stat| stat.is_file()))
+        //             .cloned()
+        //     })
+        // {
+        //     return Self::cmd(
+        //         roslynls_path,
+        //         path,
+        //         worktree.root_path().to_string(),
+        //         binary_args,
+        //     );
+        // }
+
+        let language_server_path = settings
+            .as_ref()
+            .and_then(|lsp_settings| lsp_settings.settings.as_ref())
+            .and_then(|lsp_settings| {
+                if let zed::serde_json::Value::Object(settings_map) = lsp_settings {
+                    settings_map.get(LANGUAGE_SERVER_PATH).and_then(|value| {
+                        if let zed::serde_json::Value::String(path) = value {
+                            Some(path.clone())
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                }
+            });
+
+        if let Some(language_server_path) = language_server_path {
             return Self::cmd(
                 roslynls_path,
-                path,
+                language_server_path,
                 worktree.root_path().to_string(),
                 binary_args,
             );
@@ -101,7 +130,27 @@ impl Roslyn {
             );
         }
 
-        let binary_path = Self::ensure_language_server()?;
+        let language_server_version = settings
+            .as_ref()
+            .and_then(|lsp_settings| lsp_settings.settings.as_ref())
+            .and_then(|lsp_settings| {
+                if let zed::serde_json::Value::Object(settings_map) = lsp_settings {
+                    settings_map.get(LANGUAGE_SERVER_VERSION_KEY).and_then(|value| {
+                        if let zed::serde_json::Value::String(version) = value {
+                            Some(version.clone())
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                }
+            });
+
+        let binary_path = match language_server_version {
+            Some(version) => Self::ensure_language_server_with(version)?,
+            None => Self::ensure_language_server()?,
+        };
 
         self.cached_language_server_path = Some(binary_path.clone());
 
@@ -132,7 +181,9 @@ impl Roslyn {
 
         if let zed::serde_json::Value::Object(settings_map) = settings {
             for (key, value) in &settings_map {
-                if key == ROSLYNLS_PATH_KEY {
+                if key == ROSLYNLS_PATH_KEY
+                || key == LANGUAGE_SERVER_VERSION_KEY
+                || key == LANGUAGE_SERVER_PATH {
                     continue;
                 }
 
@@ -233,9 +284,7 @@ impl Roslyn {
         )
     }
 
-    fn ensure_language_server() -> Result<String, String> {
-        let version = Self::get_language_server_latest_version()?;
-
+    fn ensure_language_server_with(version: String) -> Result<String, String> {
         let executable = utils::get_executable(LANGUAGE_SERVER);
 
         let package_id = Self::get_langauge_server_package_id();
@@ -289,6 +338,12 @@ impl Roslyn {
         }
 
         Ok(binary_path)
+    }
+
+    fn ensure_language_server() -> Result<String, String> {
+        let version = Self::get_language_server_latest_version()?;
+
+        Self::ensure_language_server_with(version)
     }
 
     fn get_langauge_server_package_id() -> String {
