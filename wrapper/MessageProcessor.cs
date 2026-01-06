@@ -317,8 +317,7 @@ public sealed class MessageProcessor
 
         var bytes = await writer.WriteLspMessageAsync(json, cancellationToken);
 
-        await this.lspLogger.WriteAsync(bytes);
-        await this.lspLogger.FlushAsync();
+        _ = bytes;
     }
 
     private static string EnrichTextDocumentDiagnosticRequest(string messageText)

@@ -10,8 +10,11 @@ using System.Threading.Tasks;
 public partial class ProcessMonitor
 {
     private readonly int? parentProcessId;
-    public ProcessMonitor()
+    private readonly ILspLogger logger;
+
+    public ProcessMonitor(ILspLogger logger)
     {
+        this.logger = logger;
         parentProcessId = GetParentProcessId();
     }
 
@@ -21,22 +24,37 @@ public partial class ProcessMonitor
     {
         if (parentProcessId == null)
         {
+            this.logger.WriteLineAsync("Invalid parent process ID.").AsTask().Wait();
             return false;
         }
 
-        while (!cancellationTokenSource.IsCancellationRequested)
+        try
         {
-            var parent = Process.GetProcessById(parentProcessId.Value);
-
-            if (parent.HasExited)
+            while (!cancellationTokenSource.IsCancellationRequested)
             {
-                return true;
-            }
+                var parent = Process.GetProcessById(parentProcessId.Value);
 
-            await Task.Delay(1000, cancellationTokenSource.Token);
+                if (parent.HasExited)
+                {
+                    this.logger.WriteLineAsync("Detected parent process exit.").AsTask().Wait();
+                    return true;
+                }
+
+                // this.logger.WriteLineAsync("Detected parent process running.").AsTask().Wait();
+                await Task.Delay(TimeSpan.FromSeconds(60), cancellationTokenSource.Token);
+            }
+        }
+        catch (ArgumentException)
+        {
+            this.logger.WriteLineAsync("Detected parent process exit.").AsTask().Wait();
+            // Expected when the parent process has exited.
+        }
+        catch (Exception e)
+        {
+            this.logger.WriteLineAsync($"Unexpected error while monitoring parent process. {e}").AsTask().Wait();
         }
 
-        return false;
+        return true;
     }
 
     private static int? GetParentProcessId()
