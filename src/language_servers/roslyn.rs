@@ -14,7 +14,7 @@ const ROSLYNLS_PATH_KEY: &str = "roslynls_path";
 const LANGUAGE_SERVER_VERSION_KEY: &str = "language_server_version";
 const LANGUAGE_SERVER_PATH: &str = "language_server_path";
 const ROSLYNLS_REPO: &str = "fallenwood/zed-roslynls";
-const ROSLYNLS_TAG: &str = "v0.0.2";
+const ROSLYNLS_TAG: &str = "v0.0.5";
 const LANGUAGE_SERVER: &str = "Microsoft.CodeAnalysis.LanguageServer";
 
 // Example version
