@@ -6,6 +6,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using ZedRoslynLS;
 
+// #if false
+Debugger.Launch();
+// #endif
+
 await ConsoleApp.RunAsync(args,
     static async (string lsp, string projectRoot, string? logFilePath = null, RpcType wrapperRpcType = RpcType.Stdio, RpcType lspRpcType = RpcType.NamedPipe, CancellationToken cancellationToken = default) =>
     {
@@ -31,20 +35,24 @@ await ConsoleApp.RunAsync(args,
             process.WaitForExit();
         }
 
+        var defaultLogFilePath = Path.Join(Path.GetTempPath(), "zed-roslynls", $"roslynls-{Path.GetFileNameWithoutExtension(projectRoot)}-{DateTime.Now:yyyyMMdd-HHmmss-fff}.txt");
+
         ILspLogger logger = string.IsNullOrEmpty(logFilePath)
-            ? new LspNoopLogger()
+            ? new LspFileLogger(defaultLogFilePath)
             : new LspFileLogger(logFilePath);
 
         var processor = MessageProcessor.Create(projectRoot, wrapperRpcType, lsp, lspRpcType, logger);
 
         _ = Task.Factory.StartNew(async () =>
         {
-            var monitor = new ProcessMonitor();
-            Console.Error.WriteLine($"Monitoring parent process ID \"{monitor.ParentProcessId}\"");
+            var monitor = new ProcessMonitor(logger);
+
+            logger.WriteLineAsync($"Monitoring parent process ID \"{monitor.ParentProcessId}\"").AsTask().Wait();
+
             var exited = await monitor.WaitForParentExit(cts);
             if (exited)
             {
-                Console.Error.WriteLine("Parent process exited. Shutting down wrapper.");
+                logger.WriteLineAsync("Parent process exited. Shutting down wrapper.").AsTask().Wait();
                 cts.Cancel();
             }
         }, TaskCreationOptions.LongRunning);

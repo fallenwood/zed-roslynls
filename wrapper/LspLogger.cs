@@ -3,10 +3,13 @@ namespace ZedRoslynLS;
 using System;
 using System.IO;
 using System.IO.Pipelines;
+using System.Threading;
 using System.Threading.Tasks;
 
 public interface ILspLogger
 {
+    public ValueTask<FlushResult> WriteLineAsync(string line) =>
+        WriteAsync(new ReadOnlyMemory<byte>(System.Text.Encoding.UTF8.GetBytes(line + "\n")));
     public ValueTask<FlushResult> WriteAsync(ReadOnlyMemory<byte> buffer);
     public ValueTask<FlushResult> FlushAsync();
 }
@@ -27,6 +30,7 @@ public sealed class LspNoopLogger : ILspLogger
 public sealed class LspFileLogger : ILspLogger, IDisposable
 {
     private readonly PipeWriter writer;
+    private SemaphoreSlim writeSemaphore = new SemaphoreSlim(1, 1);
 
     public LspFileLogger(string logFilePath)
     {
@@ -50,8 +54,16 @@ public sealed class LspFileLogger : ILspLogger, IDisposable
         return this.writer.FlushAsync();
     }
 
-    public ValueTask<FlushResult> WriteAsync(ReadOnlyMemory<byte> buffer)
+    public async ValueTask<FlushResult> WriteAsync(ReadOnlyMemory<byte> buffer)
     {
-        return this.writer.WriteAsync(buffer);
+        await this.writeSemaphore.WaitAsync();
+        try
+        {
+            return await this.writer.WriteAsync(buffer);
+        }
+        finally
+        {
+            this.writeSemaphore.Release();
+        }
     }
 }
