@@ -6,9 +6,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using ZedRoslynLS;
 
-// #if false
+#if DEBUG
 Debugger.Launch();
-// #endif
+#endif
 
 await ConsoleApp.RunAsync(args,
     static async (string lsp, string projectRoot, string? logFilePath = null, RpcType wrapperRpcType = RpcType.Stdio, RpcType lspRpcType = RpcType.NamedPipe, CancellationToken cancellationToken = default) =>
