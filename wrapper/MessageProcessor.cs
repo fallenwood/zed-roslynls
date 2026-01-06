@@ -127,7 +127,9 @@ public sealed class MessageProcessor
             var errorTask = serverError.CopyToAsync(consoleError, cancellationToken);
             var inputTask = this.ProcessInputAsync(consoleInput, serverInput, cancellationToken);
 
-            await Task.WhenAll(outputTask, inputTask, errorTask);
+            var copyStdoutTask = serverInput.CopyToAsync(consoleOutput, cancellationToken);
+
+            await Task.WhenAll(outputTask, inputTask, errorTask, copyStdoutTask);
         }
 
         await process.WaitForExitAsync(cancellationToken);
